@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "919293060863",
+    "project_id": "attendance-app-468f6",
+    "storage_bucket": "attendance-app-468f6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:919293060863:android:45c91a45a18cee25a60eca",
+        "android_client_info": {
+          "package_name": "mrtechlab.in.attendance_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAgMCG6biBrqqqAw61xLFyeLizXMHKGZi4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
