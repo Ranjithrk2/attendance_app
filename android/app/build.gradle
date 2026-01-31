@@ -5,16 +5,6 @@ plugins {
     id 'com.google.gms.google-services'
 }
 
-import java.util.Properties
-import java.io.FileInputStream
-
-// 🔐 Load keystore (MUST be outside android block)
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file("key.properties")
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
-
 android {
     namespace "mrtechlab.in.attendance_app"
     compileSdk flutter.compileSdkVersion
@@ -38,10 +28,16 @@ android {
 
     signingConfigs {
         release {
-            storeFile file(keystoreProperties['storeFile'])
-            storePassword keystoreProperties['storePassword']
-            keyAlias keystoreProperties['keyAlias']
-            keyPassword keystoreProperties['keyPassword']
+            // Read keystore info from environment variables
+            def keystorePath = System.getenv("KEYSTORE_PATH")
+            if (keystorePath != null && keystorePath != "") {
+                storeFile file(keystorePath)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            } else {
+                println "⚠️ WARNING: KEYSTORE_PATH not set. Release build will be unsigned."
+            }
         }
     }
 
@@ -49,7 +45,6 @@ android {
         debug {
             signingConfig signingConfigs.debug
         }
-
         release {
             signingConfig signingConfigs.release
             minifyEnabled true
