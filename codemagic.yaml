@@ -9,6 +9,13 @@ workflows:
       xcode: latest
       cocoapods: default
 
+      android:
+        signing:
+          - keystore: $STORE_FILE
+            keystore-password: $KEYSTORE_PASSWORD
+            key-alias: $KEY_ALIAS
+            key-password: $KEY_PASSWORD
+
     triggering:
       events:
         - push
@@ -42,10 +49,3 @@ workflows:
         notify:
           success: true
           failure: true
-
-    android:
-      code-signing:
-        keystore: $STORE_FILE
-        keystore-password: $KEYSTORE_PASSWORD
-        key-alias: $KEY_ALIAS
-        key-password: $KEY_PASSWORD
