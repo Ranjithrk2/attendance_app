@@ -18,20 +18,16 @@ workflows:
 
     scripts:
       - name: Flutter pub get
-        script: |
-          flutter pub get
+        script: flutter pub get
 
       - name: Build Android APK
-        script: |
-          flutter build apk --release
+        script: flutter build apk --release
 
       - name: Build Android App Bundle
-        script: |
-          flutter build appbundle --release
+        script: flutter build appbundle --release
 
       - name: Build iOS (no codesign)
-        script: |
-          flutter build ios --release --no-codesign
+        script: flutter build ios --release --no-codesign
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
@@ -46,3 +42,10 @@ workflows:
         notify:
           success: true
           failure: true
+
+    android:
+      code-signing:
+        keystore: $STORE_FILE
+        keystore-password: $KEYSTORE_PASSWORD
+        key-alias: $KEY_ALIAS
+        key-password: $KEY_PASSWORD
