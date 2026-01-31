@@ -445,6 +445,7 @@ class _UserDashboardState extends State<UserDashboard>
                           ),
                         ),
                         const SizedBox(height: 100),
+
                         if (!_faceRegistered) ...[
                           _actionButton(
                             "REGISTER FACE",
@@ -453,22 +454,10 @@ class _UserDashboardState extends State<UserDashboard>
                               await Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                    builder: (_) => FaceRegisterScreen(userId: widget.uid)),
+                                  builder: (_) => FaceRegisterScreen(userId: widget.uid),
+                                ),
                               );
                               _loadUserData();
-                              _checkPin();
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                        ] else if (!_pinSet) ...[
-                          _actionButton(
-                            "SET PIN",
-                            Colors.blueAccent,
-                                () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                              );
                               _checkPin();
                             },
                           ),
@@ -480,11 +469,14 @@ class _UserDashboardState extends State<UserDashboard>
                             _loading ? null : _handleCheck,
                           ),
                         ],
+
                         TextButton(
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => const UserAttendanceHistoryScreen()),
+                              MaterialPageRoute(
+                                builder: (_) => const UserAttendanceHistoryScreen(),
+                              ),
                             );
                           },
                           child: const Text(
@@ -492,7 +484,9 @@ class _UserDashboardState extends State<UserDashboard>
                             style: TextStyle(color: Colors.white70),
                           ),
                         ),
+
                         const SizedBox(height: 16),
+
                       ],
                     ),
                   ),

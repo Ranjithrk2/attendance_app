@@ -2,7 +2,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import 'admin_dashboard.dart';
 import 'landing_screen.dart';
 
@@ -17,7 +16,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     with SingleTickerProviderStateMixin {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
-
   bool isLoading = false;
 
   late AnimationController _particleController;
@@ -28,7 +26,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
   @override
   void initState() {
     super.initState();
-
     _particles = List.generate(
       _particleCount,
           (index) => _Particle(
@@ -39,9 +36,10 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       ),
     );
 
-    _particleController =
-    AnimationController(vsync: this, duration: const Duration(seconds: 60))
-      ..repeat();
+    _particleController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 60),
+    )..repeat();
   }
 
   @override
@@ -55,10 +53,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
   /// 🔐 SECURE ADMIN LOGIN
   Future<void> loginAdmin() async {
     setState(() => isLoading = true);
-
     try {
-      final credential =
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
@@ -66,11 +62,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       final user = credential.user;
       if (user == null) throw Exception("Login failed");
 
-      // 🔥 CHECK FIRESTORE ROLE
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      // 🔥 FORCE FRESH TOKEN
+      await FirebaseAuth.instance.currentUser!.getIdToken(true);
+
+      // Now fetch Firestore role
+      final doc =
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
 
       if (doc.exists &&
           doc.data()?['role'] == 'admin' &&
@@ -104,8 +101,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         borderRadius: BorderRadius.circular(20),
         borderSide: BorderSide.none,
       ),
-      contentPadding:
-      const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
     );
   }
 
@@ -127,7 +123,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               ),
             ),
           ),
-
           AnimatedBuilder(
             animation: _particleController,
             builder: (_, __) {
@@ -144,7 +139,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               );
             },
           ),
-
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -155,14 +149,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                     const Icon(Icons.admin_panel_settings,
                         size: 80, color: Colors.cyanAccent),
                     const SizedBox(height: 50),
-
                     TextField(
                       controller: emailController,
                       style: const TextStyle(color: Colors.white),
                       decoration: _inputDecoration('Email'),
                     ),
                     const SizedBox(height: 20),
-
                     TextField(
                       controller: passwordController,
                       obscureText: true,
@@ -170,7 +162,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                       decoration: _inputDecoration('Password'),
                     ),
                     const SizedBox(height: 40),
-
                     SizedBox(
                       width: double.infinity,
                       height: 55,
@@ -184,23 +175,19 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                           ),
                         ),
                         child: isLoading
-                            ? const CircularProgressIndicator(
-                            color: Colors.black)
+                            ? const CircularProgressIndicator(color: Colors.black)
                             : const Text(
                           "Login as Admin",
                           style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold),
+                              fontSize: 18, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
-
                     TextButton(
                       onPressed: () {
                         Navigator.pushReplacement(
                           context,
-                          MaterialPageRoute(
-                              builder: (_) => const LandingScreen()),
+                          MaterialPageRoute(builder: (_) => const LandingScreen()),
                         );
                       },
                       child: const Text("Back to Home",
@@ -218,14 +205,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 }
 
 // ================= PARTICLES =================
-
 class _Particle {
   double x, y, size, speedY;
-  _Particle(
-      {required this.x,
-        required this.y,
-        required this.size,
-        required this.speedY});
+  _Particle({required this.x, required this.y, required this.size, required this.speedY});
 }
 
 class _ParticlePainter extends CustomPainter {
@@ -234,11 +216,9 @@ class _ParticlePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.cyanAccent.withOpacity(0.2);
+    final paint = Paint()..color = Colors.cyanAccent.withOpacity(0.2);
     for (var p in particles) {
-      canvas.drawCircle(
-          Offset(p.x * size.width, p.y * size.height), p.size, paint);
+      canvas.drawCircle(Offset(p.x * size.width, p.y * size.height), p.size, paint);
     }
   }
 

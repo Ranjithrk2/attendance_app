@@ -2,9 +2,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'user_dashboard.dart';
 import 'force_change_password_screen.dart';
-import 'landing_screen.dart'; // <-- Import your landing screen here
+import 'landing_screen.dart';
 
 class UserLoginScreen extends StatefulWidget {
   const UserLoginScreen({Key? key}) : super(key: key);
@@ -17,6 +18,7 @@ class _UserLoginScreenState extends State<UserLoginScreen>
     with SingleTickerProviderStateMixin {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+
   bool _isLoading = false;
   bool _obscurePassword = true;
 
@@ -41,8 +43,9 @@ class _UserLoginScreenState extends State<UserLoginScreen>
     );
 
     _bgController = AnimationController(
-        vsync: this, duration: const Duration(seconds: 120))
-      ..repeat();
+      vsync: this,
+      duration: const Duration(seconds: 120),
+    )..repeat();
   }
 
   @override
@@ -58,8 +61,9 @@ class _UserLoginScreenState extends State<UserLoginScreen>
     final password = _passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("Enter Email & Password")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enter Email & Password")),
+      );
       return;
     }
 
@@ -68,12 +72,15 @@ class _UserLoginScreenState extends State<UserLoginScreen>
     try {
       final userCredential = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: email, password: password);
+
       final uid = userCredential.user!.uid;
 
-      final userDoc =
-      await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
 
-      if (!userDoc.exists || !(userDoc.get('active') as bool? ?? false)) {
+      if (!userDoc.exists || !(userDoc.data()?['active'] ?? false)) {
         await FirebaseAuth.instance.signOut();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -81,27 +88,31 @@ class _UserLoginScreenState extends State<UserLoginScreen>
             backgroundColor: Colors.red,
           ),
         );
-        setState(() => _isLoading = false);
         return;
       }
 
-      bool isFirstLogin = userDoc.get('firstLogin') ?? true;
+      final bool isFirstLogin = userDoc.data()?['firstLogin'] ?? true;
+
       if (isFirstLogin) {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-              builder: (_) => ForceChangePasswordScreen(userId: uid)),
+            builder: (_) => ForceChangePasswordScreen(userId: uid),
+          ),
         );
       } else {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => UserDashboard(uid: uid)),
+          MaterialPageRoute(
+            builder: (_) => UserDashboard(uid: uid),
+          ),
         );
       }
     } on FirebaseAuthException catch (e) {
-      String message = "Login failed!";
+      String message = "Login failed";
       if (e.code == 'user-not-found') message = "User not found";
       if (e.code == 'wrong-password') message = "Incorrect password";
+
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
     } finally {
@@ -112,9 +123,9 @@ class _UserLoginScreenState extends State<UserLoginScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF0A0A0A), // 🔒 Dark only
       body: Stack(
         children: [
-          // Particle background
           AnimatedBuilder(
             animation: _bgController,
             builder: (_, __) {
@@ -128,14 +139,14 @@ class _UserLoginScreenState extends State<UserLoginScreen>
               }
               return CustomPaint(
                 painter: _ParticlePainter(_particles),
-                child: Container(),
+                child: const SizedBox.expand(),
               );
             },
           ),
+
           SafeArea(
             child: Column(
               children: [
-                // Back arrow to LandingScreen
                 Align(
                   alignment: Alignment.topLeft,
                   child: IconButton(
@@ -143,45 +154,38 @@ class _UserLoginScreenState extends State<UserLoginScreen>
                     onPressed: () {
                       Navigator.pushReplacement(
                         context,
-                        MaterialPageRoute(builder: (_) => const LandingScreen()),
+                        MaterialPageRoute(
+                          builder: (_) => const LandingScreen(),
+                        ),
                       );
                     },
                   ),
                 ),
+
                 Expanded(
                   child: Center(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 28, vertical: 20),
+                        horizontal: 28,
+                        vertical: 20,
+                      ),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // Futuristic Title
-                          Text(
+                          const Text(
                             "LOGIN PORTAL",
                             style: TextStyle(
                               fontSize: 36,
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
                               letterSpacing: 2,
-                              shadows: [
-                                Shadow(
-                                  color: Colors.white24,
-                                  blurRadius: 8,
-                                  offset: Offset(0, 0),
-                                ),
-                                Shadow(
-                                  color: Colors.white38,
-                                  blurRadius: 16,
-                                  offset: Offset(0, 0),
-                                ),
-                              ],
                             ),
                           ),
                           const SizedBox(height: 40),
-                          _buildTextField(_emailController, "Email", false),
+                          _buildTextField(
+                              _emailController, "Email", false),
                           const SizedBox(height: 20),
-                          _buildTextField(_passwordController, "Password", true),
+                          _buildTextField(
+                              _passwordController, "Password", true),
                           const SizedBox(height: 35),
                           _buildLoginButton(),
                         ],
@@ -201,16 +205,9 @@ class _UserLoginScreenState extends State<UserLoginScreen>
       TextEditingController controller, String label, bool isPassword) {
     return Container(
       decoration: BoxDecoration(
+        color: Colors.white12,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white24),
-        color: Colors.white12,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.white10,
-            blurRadius: 8,
-            spreadRadius: 1,
-          ),
-        ],
       ),
       child: TextField(
         controller: controller,
@@ -220,12 +217,17 @@ class _UserLoginScreenState extends State<UserLoginScreen>
           labelText: label,
           labelStyle: const TextStyle(color: Colors.white70),
           border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+            borderRadius: BorderRadius.circular(20),
+            borderSide: BorderSide.none,
+          ),
           suffixIcon: isPassword
               ? IconButton(
             icon: Icon(
-                _obscurePassword ? Icons.visibility : Icons.visibility_off,
-                color: Colors.white70),
+              _obscurePassword
+                  ? Icons.visibility
+                  : Icons.visibility_off,
+              color: Colors.white70,
+            ),
             onPressed: () =>
                 setState(() => _obscurePassword = !_obscurePassword),
           )
@@ -242,7 +244,8 @@ class _UserLoginScreenState extends State<UserLoginScreen>
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white24,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         ),
         onPressed: _isLoading ? null : _login,
         child: _isLoading
@@ -256,28 +259,38 @@ class _UserLoginScreenState extends State<UserLoginScreen>
   }
 }
 
-// Particle Models
+/* ================= PARTICLES ================= */
+
 class _Particle {
   double x, y, size, speedX, speedY;
-  _Particle(
-      {required this.x,
-        required this.y,
-        required this.size,
-        required this.speedX,
-        required this.speedY});
+  _Particle({
+    required this.x,
+    required this.y,
+    required this.size,
+    required this.speedX,
+    required this.speedY,
+  });
 }
 
 class _ParticlePainter extends CustomPainter {
   final List<_Particle> particles;
+
   _ParticlePainter(this.particles);
+
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.white.withOpacity(0.08);
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.08);
+
     for (var p in particles) {
-      canvas.drawCircle(Offset(p.x * size.width, p.y * size.height), p.size, paint);
+      canvas.drawCircle(
+        Offset(p.x * size.width, p.y * size.height),
+        p.size,
+        paint,
+      );
     }
   }
 
   @override
-  bool shouldRepaint(covariant _ParticlePainter oldDelegate) => true;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
