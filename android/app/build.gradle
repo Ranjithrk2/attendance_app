@@ -5,6 +5,16 @@ plugins {
     id 'com.google.gms.google-services'
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
+// 🔐 Load keystore (MUST be outside android block)
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "mrtechlab.in.attendance_app"
     compileSdk flutter.compileSdkVersion
@@ -26,19 +36,12 @@ android {
         jvmTarget = "17"
     }
 
-    // 🔐 Load keystore
-    def keystoreProperties = new Properties()
-    def keystorePropertiesFile = rootProject.file("key.properties")
-    if (keystorePropertiesFile.exists()) {
-        keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-    }
-
     signingConfigs {
         release {
+            storeFile file(keystoreProperties['storeFile'])
+            storePassword keystoreProperties['storePassword']
             keyAlias keystoreProperties['keyAlias']
             keyPassword keystoreProperties['keyPassword']
-            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
-            storePassword keystoreProperties['storePassword']
         }
     }
 
