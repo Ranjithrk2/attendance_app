@@ -4,6 +4,14 @@ import '../models/member.dart';
 import 'member_report_screen.dart';
 import 'add_member_screen.dart';
 
+enum SortType {
+  nameAsc,
+  nameDesc,
+  userId,
+  role,
+  recent,
+}
+
 class MemberListScreen extends StatefulWidget {
   const MemberListScreen({super.key});
 
@@ -13,15 +21,19 @@ class MemberListScreen extends StatefulWidget {
 
 class _MemberListScreenState extends State<MemberListScreen> {
   bool loading = true;
+
   List<Member> members = [];
   List<Member> filteredMembers = [];
+
   final TextEditingController searchCtrl = TextEditingController();
+
+  SortType currentSort = SortType.nameAsc;
 
   @override
   void initState() {
     super.initState();
     fetchMembers();
-    searchCtrl.addListener(filterMembers);
+    searchCtrl.addListener(applySearchAndSort);
   }
 
   @override
@@ -31,6 +43,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= FETCH MEMBERS =================
+
   Future<void> fetchMembers() async {
     try {
       final snapshot =
@@ -42,7 +55,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
 
       setState(() {
         members = list;
-        filteredMembers = list;
+        applySearchAndSort();
         loading = false;
       });
     } catch (e) {
@@ -51,22 +64,35 @@ class _MemberListScreenState extends State<MemberListScreen> {
     }
   }
 
-  // ================= SEARCH + GLOW =================
-  void filterMembers() {
+  // ================= SEARCH + SORT =================
+
+  void applySearchAndSort() {
     final q = searchCtrl.text.trim().toLowerCase();
 
-    if (q.isEmpty) {
-      setState(() => filteredMembers = members);
-      return;
-    }
-
-    final matches = members.where((m) {
+    List<Member> list = members.where((m) {
+      if (q.isEmpty) return true;
       return m.name.toLowerCase().contains(q) ||
           m.userId.toLowerCase().contains(q);
     }).toList();
 
+    list.sort((a, b) {
+      switch (currentSort) {
+        case SortType.nameAsc:
+          return a.name.compareTo(b.name);
+        case SortType.nameDesc:
+          return b.name.compareTo(a.name);
+        case SortType.userId:
+          return a.userId.compareTo(b.userId);
+        case SortType.role:
+          return a.role.compareTo(b.role);
+        case SortType.recent:
+          return (b.createdAt ?? DateTime(2000))
+              .compareTo(a.createdAt ?? DateTime(2000));
+      }
+    });
+
     setState(() {
-      filteredMembers = matches;
+      filteredMembers = list;
     });
   }
 
@@ -78,6 +104,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= DELETE =================
+
   Future<void> deleteMember(Member member) async {
     try {
       await FirebaseFirestore.instance
@@ -108,8 +135,8 @@ class _MemberListScreenState extends State<MemberListScreen> {
         ),
         actions: [
           TextButton(
-            child:
-            const Text("Cancel", style: TextStyle(color: Colors.white54)),
+            child: const Text("Cancel",
+                style: TextStyle(color: Colors.white54)),
             onPressed: () => Navigator.pop(context),
           ),
           TextButton(
@@ -126,133 +153,170 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= UI =================
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-
       appBar: AppBar(
         backgroundColor: Colors.black,
         title: const Text("Members"),
         actions: [
+          _sortMenu(),
           IconButton(
-            icon: const Icon(Icons.person_add, color: Colors.cyanAccent),
+            icon:
+            const Icon(Icons.person_add, color: Colors.cyanAccent),
             onPressed: () async {
               await Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const AddMemberScreen()),
+                MaterialPageRoute(
+                    builder: (_) => const AddMemberScreen()),
               );
-              fetchMembers(); // refresh after add
+              fetchMembers();
             },
           ),
         ],
       ),
-
       body: loading
           ? const Center(
-        child: CircularProgressIndicator(color: Colors.cyanAccent),
+        child: CircularProgressIndicator(
+            color: Colors.cyanAccent),
       )
           : Column(
         children: [
-          // ================= SEARCH BAR =================
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: TextField(
-              controller: searchCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: "Search by name or ID",
-                hintStyle: const TextStyle(color: Colors.white54),
-                prefixIcon:
-                const Icon(Icons.search, color: Colors.cyanAccent),
-                filled: true,
-                fillColor: Colors.white10,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ),
-
-          // ================= LIST =================
-          Expanded(
-            child: filteredMembers.isEmpty
-                ? const Center(
-              child: Text("No members found",
-                  style: TextStyle(color: Colors.white54)),
-            )
-                : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: filteredMembers.length,
-              itemBuilder: (_, i) {
-                final m = filteredMembers[i];
-                final glow = isHighlighted(m);
-
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 250),
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white10,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: glow
-                        ? [
-                      BoxShadow(
-                        color: Colors.cyanAccent
-                            .withOpacity(0.6),
-                        blurRadius: 16,
-                        spreadRadius: 1,
-                      )
-                    ]
-                        : [],
-                    border: glow
-                        ? Border.all(
-                        color: Colors.cyanAccent, width: 1.5)
-                        : null,
-                  ),
-                  child: ListTile(
-                    title: Text(
-                      m.name,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                    subtitle: Text(
-                      "ID: ${m.userId} • ${m.role}",
-                      style: TextStyle(
-                        color: glow
-                            ? Colors.cyanAccent
-                            : Colors.white54,
-                      ),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.bar_chart,
-                              color: Colors.cyanAccent),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    MemberReportScreen(member: m),
-                              ),
-                            );
-                          },
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete,
-                              color: Colors.redAccent),
-                          onPressed: () => confirmDelete(m),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
+          _searchBar(),
+          Expanded(child: _memberList()),
         ],
       ),
+    );
+  }
+
+  // ================= SORT MENU =================
+
+  Widget _sortMenu() {
+    return PopupMenuButton<SortType>(
+      icon: const Icon(Icons.sort, color: Colors.cyanAccent),
+      color: Colors.black,
+      onSelected: (value) {
+        setState(() {
+          currentSort = value;
+          applySearchAndSort();
+        });
+      },
+      itemBuilder: (_) => [
+        _menuItem("Name (A–Z)", SortType.nameAsc),
+        _menuItem("Name (Z–A)", SortType.nameDesc),
+        _menuItem("User ID", SortType.userId),
+        _menuItem("Role", SortType.role),
+        _menuItem("Recently Added", SortType.recent),
+      ],
+    );
+  }
+
+  PopupMenuItem<SortType> _menuItem(String text, SortType value) {
+    return PopupMenuItem(
+      value: value,
+      child:
+      Text(text, style: const TextStyle(color: Colors.white)),
+    );
+  }
+
+  // ================= SEARCH BAR =================
+
+  Widget _searchBar() {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: TextField(
+        controller: searchCtrl,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          hintText: "Search by name or ID",
+          hintStyle: const TextStyle(color: Colors.white54),
+          prefixIcon:
+          const Icon(Icons.search, color: Colors.cyanAccent),
+          filled: true,
+          fillColor: Colors.white10,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ================= LIST =================
+
+  Widget _memberList() {
+    if (filteredMembers.isEmpty) {
+      return const Center(
+        child: Text("No members found",
+            style: TextStyle(color: Colors.white54)),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: filteredMembers.length,
+      itemBuilder: (_, i) {
+        final m = filteredMembers[i];
+        final glow = isHighlighted(m);
+
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white10,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: glow
+                ? [
+              BoxShadow(
+                color: Colors.cyanAccent.withOpacity(0.6),
+                blurRadius: 16,
+              )
+            ]
+                : [],
+            border: glow
+                ? Border.all(
+                color: Colors.cyanAccent, width: 1.5)
+                : null,
+          ),
+          child: ListTile(
+            title: Text(m.name,
+                style: const TextStyle(color: Colors.white)),
+            subtitle: Text(
+              "ID: ${m.userId} • ${m.role}",
+              style: TextStyle(
+                color:
+                glow ? Colors.cyanAccent : Colors.white54,
+              ),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.bar_chart,
+                      color: Colors.cyanAccent),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            MemberReportScreen(member: m),
+                      ),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete,
+                      color: Colors.redAccent),
+                  onPressed: () => confirmDelete(m),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

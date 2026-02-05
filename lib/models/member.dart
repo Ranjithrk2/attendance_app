@@ -1,9 +1,12 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class Member {
   final String uid;
   final String userId;
   final String name;
   final String role;
   final String? imagePath;
+  final DateTime? createdAt; // ✅ added
 
   Member({
     required this.uid,
@@ -11,6 +14,7 @@ class Member {
     required this.name,
     required this.role,
     this.imagePath,
+    this.createdAt,
   });
 
   factory Member.fromMap(String id, Map<String, dynamic> data) {
@@ -19,7 +23,7 @@ class Member {
     final rawRole = data['role'];
 
     return Member(
-      uid: data['uid'] ?? id,
+      uid: (data['uid'] ?? id).toString(),
       userId: (rawUserId != null && rawUserId.toString().trim().isNotEmpty)
           ? rawUserId.toString()
           : '—',
@@ -30,6 +34,9 @@ class Member {
           ? rawRole.toString()
           : 'Employee',
       imagePath: data['profileImageBase64'],
+      createdAt: data['createdAt'] is Timestamp
+          ? (data['createdAt'] as Timestamp).toDate()
+          : null, // ✅ safe for old users
     );
   }
 }
