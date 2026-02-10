@@ -1,17 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import '../models/member.dart';
 import 'member_report_screen.dart';
 import 'add_member_screen.dart';
 
-enum SortType {
-  nameAsc,
-  nameDesc,
-  userId,
-  role,
-  recent,
-}
+enum SortType { nameAsc, nameDesc, userId, role, recent }
 
 class MemberListScreen extends StatefulWidget {
   const MemberListScreen({super.key});
@@ -21,19 +14,8 @@ class MemberListScreen extends StatefulWidget {
 }
 
 class _MemberListScreenState extends State<MemberListScreen> {
-  bool loading = true;
-  List<Member> members = [];
-  List<Member> filteredMembers = [];
-
   final TextEditingController searchCtrl = TextEditingController();
   SortType currentSort = SortType.nameAsc;
-
-  @override
-  void initState() {
-    super.initState();
-    fetchMembers();
-    searchCtrl.addListener(applySearchAndSort);
-  }
 
   @override
   void dispose() {
@@ -41,83 +23,25 @@ class _MemberListScreenState extends State<MemberListScreen> {
     super.dispose();
   }
 
-  // ================= FETCH MEMBERS =================
-  Future<void> fetchMembers() async {
-    try {
-      final snapshot =
-      await FirebaseFirestore.instance.collection('users').get();
-
-      final list = snapshot.docs
-          .map((doc) => Member.fromMap(doc.id, doc.data()))
-          .toList();
-
-      setState(() {
-        members = list;
-        applySearchAndSort();
-        loading = false;
-      });
-    } catch (e) {
-      debugPrint("Fetch error: $e");
-      setState(() => loading = false);
-    }
+  bool isHighlighted(Member m, String query) {
+    if (query.isEmpty) return false;
+    return m.name.toLowerCase().contains(query) ||
+        m.userId.toLowerCase().contains(query);
   }
 
-  // ================= SEARCH + SORT =================
-  void applySearchAndSort() {
-    final q = searchCtrl.text.trim().toLowerCase();
-
-    List<Member> list = members.where((m) {
-      if (q.isEmpty) return true;
-      return m.name.toLowerCase().contains(q) ||
-          m.userId.toLowerCase().contains(q);
-    }).toList();
-
-    list.sort((a, b) {
-      switch (currentSort) {
-        case SortType.nameAsc:
-          return a.name.compareTo(b.name);
-        case SortType.nameDesc:
-          return b.name.compareTo(a.name);
-        case SortType.userId:
-          return a.userId.compareTo(b.userId);
-        case SortType.role:
-          return a.role.compareTo(b.role);
-        case SortType.recent:
-          return (b.createdAt ?? DateTime(2000))
-              .compareTo(a.createdAt ?? DateTime(2000));
-      }
-    });
-
-    setState(() {
-      filteredMembers = list;
-    });
-  }
-
-  bool isHighlighted(Member m) {
-    final q = searchCtrl.text.trim().toLowerCase();
-    if (q.isEmpty) return false;
-    return m.name.toLowerCase().contains(q) ||
-        m.userId.toLowerCase().contains(q);
-  }
-
-  // ================= STATUS TOGGLE =================
   Future<void> toggleStatus(Member member) async {
-    final newStatus =
-    member.status == 'active' ? 'suspended' : 'active';
-
+    final newStatus = member.status == 'active' ? 'suspended' : 'active';
     await FirebaseFirestore.instance
         .collection('users')
         .doc(member.uid)
         .update({'status': newStatus});
 
-    // 🔁 Auto checkout if suspended
     if (newStatus == 'suspended') {
       final snap = await FirebaseFirestore.instance
           .collection('attendance')
           .where('userId', isEqualTo: member.uid)
           .where('checkOut', isNull: true)
           .get();
-
       for (final doc in snap.docs) {
         await doc.reference.update({
           'checkOut': Timestamp.now(),
@@ -125,23 +49,14 @@ class _MemberListScreenState extends State<MemberListScreen> {
         });
       }
     }
-
-    fetchMembers();
   }
 
-  // ================= DELETE =================
   Future<void> deleteMember(Member member) async {
     try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(member.uid)
-          .delete();
-
+      await FirebaseFirestore.instance.collection('users').doc(member.uid).delete();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Member deleted")),
       );
-
-      fetchMembers();
     } catch (e) {
       debugPrint("Delete error: $e");
     }
@@ -151,22 +66,19 @@ class _MemberListScreenState extends State<MemberListScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.black,
-        title: const Text("Delete Member",
-            style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.grey[900],
+        title: const Text("Delete Member", style: TextStyle(color: Colors.white)),
         content: const Text(
           "Are you sure you want to delete this member?",
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
-            child: const Text("Cancel",
-                style: TextStyle(color: Colors.white54)),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white54)),
             onPressed: () => Navigator.pop(context),
           ),
           TextButton(
-            child: const Text("Delete",
-                style: TextStyle(color: Colors.redAccent)),
+            child: const Text("Delete", style: TextStyle(color: Colors.redAccent)),
             onPressed: () {
               Navigator.pop(context);
               deleteMember(member);
@@ -177,13 +89,34 @@ class _MemberListScreenState extends State<MemberListScreen> {
     );
   }
 
-  // ================= UI =================
+  List<Member> sortMembers(List<Member> list) {
+    switch (currentSort) {
+      case SortType.nameAsc:
+        list.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case SortType.nameDesc:
+        list.sort((a, b) => b.name.compareTo(a.name));
+        break;
+      case SortType.userId:
+        list.sort((a, b) => a.userId.compareTo(b.userId));
+        break;
+      case SortType.role:
+        list.sort((a, b) => a.role.compareTo(b.role));
+        break;
+      case SortType.recent:
+        list.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+        break;
+    }
+    return list;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.grey[900],
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: Colors.grey[900],
         title: const Text("Members"),
         actions: [
           _sortMenu(),
@@ -192,23 +125,144 @@ class _MemberListScreenState extends State<MemberListScreen> {
             onPressed: () async {
               await Navigator.push(
                 context,
-                MaterialPageRoute(
-                    builder: (_) => const AddMemberScreen()),
+                MaterialPageRoute(builder: (_) => const AddMemberScreen()),
               );
-              fetchMembers();
             },
           ),
         ],
       ),
-      body: loading
-          ? const Center(
-        child:
-        CircularProgressIndicator(color: Colors.cyanAccent),
-      )
-          : Column(
+      body: Column(
         children: [
           _searchBar(),
-          Expanded(child: _memberList()),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('users').snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: Colors.cyanAccent),
+                  );
+                }
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Text("No members found",
+                        style: TextStyle(color: Colors.white54)),
+                  );
+                }
+
+                // Map documents to Member objects
+                List<Member> members = snapshot.data!.docs
+                    .map((doc) =>
+                    Member.fromMap(doc.id, doc.data() as Map<String, dynamic>))
+                    .toList();
+
+                // Apply search
+                final query = searchCtrl.text.trim().toLowerCase();
+                if (query.isNotEmpty) {
+                  members = members.where((m) {
+                    return m.name.toLowerCase().contains(query) ||
+                        m.userId.toLowerCase().contains(query);
+                  }).toList();
+                }
+
+                // Apply sort
+                members = sortMembers(members);
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: members.length,
+                  itemBuilder: (_, i) {
+                    final m = members[i];
+                    final isSuspended = m.status == 'suspended';
+
+                    return Card(
+                      color: Colors.grey[850],
+                      shadowColor: Colors.black54,
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(
+                          color: isSuspended ? Colors.redAccent : Colors.cyanAccent,
+                          width: 1,
+                        ),
+                      ),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        leading: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isSuspended ? Colors.red : Colors.green,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            isSuspended ? 'SUSPENDED' : 'ACTIVE',
+                            style: const TextStyle(
+                                color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        title: Text(
+                          m.name,
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: isSuspended
+                                  ? FontWeight.w500
+                                  : FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          "ID: ${m.userId} • ${m.role}",
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                        trailing: PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert, color: Colors.cyanAccent),
+                          color: Colors.grey[850],
+                          onSelected: (value) {
+                            switch (value) {
+                              case 'toggleStatus':
+                                toggleStatus(m);
+                                break;
+                              case 'viewReport':
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) =>
+                                          MemberReportScreen(member: m)),
+                                );
+                                break;
+                              case 'delete':
+                                confirmDelete(m);
+                                break;
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'toggleStatus',
+                              child: Text(
+                                isSuspended ? 'Activate' : 'Suspend',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'viewReport',
+                              child: Text('View Report',
+                                  style: TextStyle(color: Colors.white)),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Delete',
+                                  style: TextStyle(color: Colors.redAccent)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
@@ -218,11 +272,10 @@ class _MemberListScreenState extends State<MemberListScreen> {
   Widget _sortMenu() {
     return PopupMenuButton<SortType>(
       icon: const Icon(Icons.sort, color: Colors.cyanAccent),
-      color: Colors.black,
+      color: Colors.grey[850],
       onSelected: (value) {
         setState(() {
           currentSort = value;
-          applySearchAndSort();
         });
       },
       itemBuilder: (_) => [
@@ -238,8 +291,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
   PopupMenuItem<SortType> _menuItem(String text, SortType value) {
     return PopupMenuItem(
       value: value,
-      child: Text(text,
-          style: const TextStyle(color: Colors.white)),
+      child: Text(text, style: const TextStyle(color: Colors.white)),
     );
   }
 
@@ -253,101 +305,15 @@ class _MemberListScreenState extends State<MemberListScreen> {
         decoration: InputDecoration(
           hintText: "Search by name or ID",
           hintStyle: const TextStyle(color: Colors.white54),
-          prefixIcon:
-          const Icon(Icons.search, color: Colors.cyanAccent),
+          prefixIcon: const Icon(Icons.search, color: Colors.cyanAccent),
           filled: true,
-          fillColor: Colors.white10,
+          fillColor: Colors.grey[850],
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: BorderSide.none,
           ),
         ),
       ),
-    );
-  }
-
-  // ================= LIST =================
-  Widget _memberList() {
-    if (filteredMembers.isEmpty) {
-      return const Center(
-        child: Text("No members found",
-            style: TextStyle(color: Colors.white54)),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: filteredMembers.length,
-      itemBuilder: (_, i) {
-        final m = filteredMembers[i];
-        final glow = isHighlighted(m);
-
-        final isSuspended = m.status == 'suspended';
-
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: Colors.white10,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color:
-              isSuspended ? Colors.redAccent : Colors.cyanAccent,
-              width: 1.2,
-            ),
-          ),
-          child: ListTile(
-            title: Text(
-              m.name,
-              style: TextStyle(
-                color: isSuspended
-                    ? Colors.redAccent
-                    : Colors.white,
-              ),
-            ),
-            subtitle: Text(
-              "ID: ${m.userId} • ${m.role}",
-              style: const TextStyle(color: Colors.white54),
-            ),
-            leading: Chip(
-              label: Text(
-                isSuspended ? 'SUSPENDED' : 'ACTIVE',
-                style: const TextStyle(color: Colors.white),
-              ),
-              backgroundColor:
-              isSuspended ? Colors.red : Colors.green,
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.sync),
-                  color: Colors.orangeAccent,
-                  onPressed: () => toggleStatus(m),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.bar_chart,
-                      color: Colors.cyanAccent),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            MemberReportScreen(member: m),
-                      ),
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete,
-                      color: Colors.redAccent),
-                  onPressed: () => confirmDelete(m),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 }
