@@ -15,6 +15,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_slidable: ^4.0.3
   fl_chart: ^1.1.1
+  table_calendar: ^3.1.1   # ✅ REQUIRED FOR CALENDAR VIEW
 
   # Storage / Local
   shared_preferences: ^2.2.2
@@ -52,7 +53,6 @@ flutter_native_splash:
   image: assets/images/logo.png
   android: true
   ios: true
-
 
 flutter:
   uses-material-design: true
