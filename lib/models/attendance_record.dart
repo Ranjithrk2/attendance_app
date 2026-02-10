@@ -3,10 +3,19 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class AttendanceRecord {
   final String id;
   final String userId;
+
   final DateTime checkIn;
   final DateTime? checkOut;
+
   final String? checkInSelfieBase64;
   final String? checkOutSelfieBase64;
+
+  /// 📍 Location (NEW)
+  final GeoPoint? checkInLocation;
+  final GeoPoint? checkOutLocation;
+
+  /// 🔁 Auto checkout flag (NEW)
+  final bool autoCheckedOut;
 
   AttendanceRecord({
     required this.id,
@@ -15,16 +24,23 @@ class AttendanceRecord {
     this.checkOut,
     this.checkInSelfieBase64,
     this.checkOutSelfieBase64,
+    this.checkInLocation,
+    this.checkOutLocation,
+    this.autoCheckedOut = false,
   });
 
-  /// Total working time
+  /// ⏱️ Total working time
   Duration get totalTime =>
       checkOut != null ? checkOut!.difference(checkIn) : Duration.zero;
 
-  /// Status
-  String get status => checkOut == null ? 'Checked In' : 'Checked Out';
+  /// 📌 Status
+  String get status {
+    if (checkOut == null) return 'Checked In';
+    if (autoCheckedOut) return 'Auto Checked Out';
+    return 'Checked Out';
+  }
 
-  /// Firestore → Model
+  /// 🔄 Firestore → Model
   factory AttendanceRecord.fromDoc(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
 
@@ -43,10 +59,13 @@ class AttendanceRecord {
       data['checkOut'] != null ? parseDate(data['checkOut']) : null,
       checkInSelfieBase64: data['checkInSelfieBase64'],
       checkOutSelfieBase64: data['checkOutSelfieBase64'],
+      checkInLocation: data['checkInLocation'],
+      checkOutLocation: data['checkOutLocation'],
+      autoCheckedOut: data['autoCheckedOut'] ?? false,
     );
   }
 
-  /// Model → Firestore
+  /// ⬆️ Model → Firestore
   Map<String, dynamic> toMap() {
     return {
       'userId': userId,
@@ -54,6 +73,9 @@ class AttendanceRecord {
       'checkOut': checkOut != null ? Timestamp.fromDate(checkOut!) : null,
       'checkInSelfieBase64': checkInSelfieBase64,
       'checkOutSelfieBase64': checkOutSelfieBase64,
+      'checkInLocation': checkInLocation,
+      'checkOutLocation': checkOutLocation,
+      'autoCheckedOut': autoCheckedOut,
     };
   }
 }

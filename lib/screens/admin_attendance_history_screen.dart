@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AdminAttendanceHistoryScreen extends StatefulWidget {
   const AdminAttendanceHistoryScreen({super.key});
@@ -20,7 +21,6 @@ class _AdminAttendanceHistoryScreenState
   DateTime? _selectedDay;
 
   // ---------------- FIRESTORE LOAD (DAY-WISE) ----------------
-
   Future<void> loadRecordsByDate(DateTime date) async {
     setState(() {
       isLoading = true;
@@ -49,7 +49,6 @@ class _AdminAttendanceHistoryScreenState
   }
 
   // ---------------- HELPERS ----------------
-
   DateTime? _ts(dynamic v) => v is Timestamp ? v.toDate() : null;
 
   ImageProvider? _img(dynamic b64) {
@@ -79,8 +78,59 @@ class _AdminAttendanceHistoryScreenState
     return '${d.inHours}h ${d.inMinutes % 60}m';
   }
 
-  // ---------------- UI ----------------
+  // ---------------- LOCATION UI HELPERS ----------------
+  Widget _locationBlock(String title, Map<String, dynamic>? loc) {
+    if (loc == null) return const SizedBox();
 
+    final lat = loc['lat'];
+    final lng = loc['lng'];
+    final acc = loc['accuracy'];
+    final ts = _ts(loc['timestamp']);
+
+    if (lat == null || lng == null) return const SizedBox();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: const TextStyle(
+                  color: Colors.white70, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 2),
+          Text(
+            'Lat: $lat, Lng: $lng',
+            style: const TextStyle(color: Colors.white60, fontSize: 13),
+          ),
+          Text(
+            'Accuracy: ${acc ?? '--'} m',
+            style: const TextStyle(color: Colors.white60, fontSize: 13),
+          ),
+          if (ts != null)
+            Text(
+              'At: ${ts.toLocal()}',
+              style: const TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+          TextButton(
+            onPressed: () async {
+              final url =
+                  'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+              if (await canLaunchUrl(Uri.parse(url))) {
+                launchUrl(Uri.parse(url),
+                    mode: LaunchMode.externalApplication);
+              }
+            },
+            child: const Text(
+              'View on Map',
+              style: TextStyle(color: Colors.cyanAccent, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -100,7 +150,6 @@ class _AdminAttendanceHistoryScreenState
   }
 
   // ---------------- CALENDAR ----------------
-
   Widget _calendar() {
     return TableCalendar(
       firstDay: DateTime(2023),
@@ -136,7 +185,6 @@ class _AdminAttendanceHistoryScreenState
   }
 
   // ---------------- BODY ----------------
-
   Widget _body() {
     if (_selectedDay == null) {
       return const Center(
@@ -167,10 +215,14 @@ class _AdminAttendanceHistoryScreenState
       itemCount: records.length,
       itemBuilder: (_, i) {
         final r = records[i];
+
         final iTime = _ts(r['checkIn']);
         final oTime = _ts(r['checkOut']);
+
         final inImg = _img(r['checkInSelfieBase64']);
         final outImg = _img(r['checkOutSelfieBase64']);
+
+        final auto = r['autoCheckedOut'] == true;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
@@ -178,6 +230,9 @@ class _AdminAttendanceHistoryScreenState
           decoration: BoxDecoration(
             color: Colors.white10,
             borderRadius: BorderRadius.circular(18),
+            border: auto
+                ? Border.all(color: Colors.orangeAccent, width: 1.4)
+                : null,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -187,12 +242,29 @@ class _AdminAttendanceHistoryScreenState
                 style: const TextStyle(
                     color: Colors.white, fontWeight: FontWeight.bold),
               ),
+
+              if (auto)
+                const Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Chip(
+                    label: Text('AUTO CHECK-OUT',
+                        style: TextStyle(color: Colors.white)),
+                    backgroundColor: Colors.orange,
+                  ),
+                ),
+
               const SizedBox(height: 8),
               _row('Check-in', iTime?.toLocal().toString() ?? '--'),
               _row('Check-out', oTime?.toLocal().toString() ?? 'Working'),
-              const SizedBox(height: 6),
+
               if (inImg != null) _imgRow('Check-in', inImg),
               if (outImg != null) _imgRow('Check-out', outImg),
+
+              _locationBlock(
+                  'Check-in Location', r['checkInLocation']),
+              _locationBlock(
+                  'Check-out Location', r['checkOutLocation']),
+
               const SizedBox(height: 6),
               Text(
                 'Duration: ${duration(iTime, oTime)}',
@@ -220,8 +292,7 @@ class _AdminAttendanceHistoryScreenState
               style: TextStyle(color: Colors.white70)),
           Text(totalWorkingTime(),
               style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold)),
+                  color: Colors.white, fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -238,12 +309,13 @@ class _AdminAttendanceHistoryScreenState
       child: Row(
         children: [
           Text(l,
-              style:
-              const TextStyle(color: Colors.white60, fontSize: 13)),
+              style: const TextStyle(
+                  color: Colors.white60, fontSize: 13)),
           const SizedBox(width: 12),
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image(image: img, width: 52, height: 52, fit: BoxFit.cover),
+            child:
+            Image(image: img, width: 52, height: 52, fit: BoxFit.cover),
           ),
         ],
       ),

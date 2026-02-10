@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:geolocator/geolocator.dart';
+
 import '../services/face_embedding_service.dart';
 
 class FaceAttendanceScreen extends StatefulWidget {
-  final String userId; // Current logged-in user
+  final String userId;
+
   const FaceAttendanceScreen({super.key, required this.userId});
 
   @override
@@ -38,7 +41,32 @@ class _FaceAttendanceScreenState extends State<FaceAttendanceScreen> {
     super.dispose();
   }
 
-  /// Fetch master face embedding from Firestore safely
+  /// 📍 Get current GPS location
+  Future<GeoPoint> getCurrentLocation() async {
+    final permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      throw Exception('Location permission denied');
+    }
+
+    final position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    return GeoPoint(position.latitude, position.longitude);
+  }
+
+  /// 👤 Get user status
+  Future<String> getUserStatus() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .get();
+
+    return doc.data()?['status'] ?? 'active';
+  }
+
+  /// 🧠 Get master embedding
   Future<List<double>> getMasterEmbeddingFromFirestore() async {
     final doc = await FirebaseFirestore.instance
         .collection('users')
@@ -48,23 +76,54 @@ class _FaceAttendanceScreenState extends State<FaceAttendanceScreen> {
     if (!doc.exists || doc.data() == null) return [];
 
     List<dynamic> embeddingList = doc.data()!['masterFaceEmbedding'] ?? [];
-
-    // Safely convert to double
     return embeddingList.map((e) {
-      if (e == null) return 0.0;
       if (e is int) return e.toDouble();
       if (e is double) return e;
-      if (e is String) return double.tryParse(e) ?? 0.0;
       return 0.0;
     }).toList();
   }
 
-  /// Capture and verify face
+  /// 🔁 Auto checkout if suspended
+  Future<void> autoCheckoutIfNeeded() async {
+    final snap = await FirebaseFirestore.instance
+        .collection('attendance')
+        .where('userId', isEqualTo: widget.userId)
+        .where('checkOut', isNull: true)
+        .limit(1)
+        .get();
+
+    if (snap.docs.isNotEmpty) {
+      final location = await getCurrentLocation();
+
+      await snap.docs.first.reference.update({
+        'checkOut': Timestamp.now(),
+        'checkOutLocation': location,
+        'autoCheckedOut': true,
+      });
+    }
+  }
+
+  /// 📸 Capture, verify & mark attendance
   Future<void> captureAndVerifyFace() async {
     if (controller == null || isProcessing) return;
     setState(() => isProcessing = true);
 
     try {
+      // 🔒 Check user status
+      final status = await getUserStatus();
+      if (status == 'suspended') {
+        await autoCheckoutIfNeeded();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Your account is suspended'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => isProcessing = false);
+        return;
+      }
+
       final image = await controller!.takePicture();
       final inputImage = InputImage.fromFilePath(image.path);
 
@@ -79,42 +138,54 @@ class _FaceAttendanceScreenState extends State<FaceAttendanceScreen> {
       detector.close();
 
       if (faces.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No face detected!')),
-        );
-        setState(() => isProcessing = false);
-        return;
+        throw Exception('No face detected');
       }
 
-      // Extract live embedding
-      final liveEmbedding = FaceEmbeddingService.extractEmbedding(faces.first);
-
-      // Get master embedding
+      final liveEmbedding =
+      FaceEmbeddingService.extractEmbedding(faces.first);
       final masterEmbedding = await getMasterEmbeddingFromFirestore();
 
-      // Verify face
-      if (FaceEmbeddingService.verifyFace(masterEmbedding, liveEmbedding)) {
-        // ✅ Mark attendance
-        await FirebaseFirestore.instance
-            .collection('attendance')
-            .doc('${widget.userId}_${DateTime.now().toIso8601String()}')
-            .set({
+      if (!FaceEmbeddingService.verifyFace(masterEmbedding, liveEmbedding)) {
+        throw Exception('Face does not match');
+      }
+
+      final location = await getCurrentLocation();
+
+      // 🔍 Check existing open attendance
+      final existing = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('userId', isEqualTo: widget.userId)
+          .where('checkOut', isNull: true)
+          .limit(1)
+          .get();
+
+      if (existing.docs.isEmpty) {
+        // ✅ CHECK-IN
+        await FirebaseFirestore.instance.collection('attendance').add({
           'userId': widget.userId,
-          'timestamp': Timestamp.now(),
+          'checkIn': Timestamp.now(),
+          'checkInLocation': location,
+          'autoCheckedOut': false,
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Attendance marked!')),
+          const SnackBar(content: Text('Checked in successfully')),
         );
       } else {
+        // ✅ CHECK-OUT
+        await existing.docs.first.reference.update({
+          'checkOut': Timestamp.now(),
+          'checkOutLocation': location,
+        });
+
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Face does not match!')),
+          const SnackBar(content: Text('Checked out successfully')),
         );
       }
     } catch (e) {
-      print('Error: $e');
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
     }
 
     setState(() => isProcessing = false);

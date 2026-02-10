@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../models/member.dart';
 import 'member_report_screen.dart';
 import 'add_member_screen.dart';
@@ -21,12 +22,10 @@ class MemberListScreen extends StatefulWidget {
 
 class _MemberListScreenState extends State<MemberListScreen> {
   bool loading = true;
-
   List<Member> members = [];
   List<Member> filteredMembers = [];
 
   final TextEditingController searchCtrl = TextEditingController();
-
   SortType currentSort = SortType.nameAsc;
 
   @override
@@ -43,7 +42,6 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= FETCH MEMBERS =================
-
   Future<void> fetchMembers() async {
     try {
       final snapshot =
@@ -65,7 +63,6 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= SEARCH + SORT =================
-
   void applySearchAndSort() {
     final q = searchCtrl.text.trim().toLowerCase();
 
@@ -103,8 +100,36 @@ class _MemberListScreenState extends State<MemberListScreen> {
         m.userId.toLowerCase().contains(q);
   }
 
-  // ================= DELETE =================
+  // ================= STATUS TOGGLE =================
+  Future<void> toggleStatus(Member member) async {
+    final newStatus =
+    member.status == 'active' ? 'suspended' : 'active';
 
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(member.uid)
+        .update({'status': newStatus});
+
+    // 🔁 Auto checkout if suspended
+    if (newStatus == 'suspended') {
+      final snap = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('userId', isEqualTo: member.uid)
+          .where('checkOut', isNull: true)
+          .get();
+
+      for (final doc in snap.docs) {
+        await doc.reference.update({
+          'checkOut': Timestamp.now(),
+          'autoCheckedOut': true,
+        });
+      }
+    }
+
+    fetchMembers();
+  }
+
+  // ================= DELETE =================
   Future<void> deleteMember(Member member) async {
     try {
       await FirebaseFirestore.instance
@@ -153,7 +178,6 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= UI =================
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -164,8 +188,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
         actions: [
           _sortMenu(),
           IconButton(
-            icon:
-            const Icon(Icons.person_add, color: Colors.cyanAccent),
+            icon: const Icon(Icons.person_add, color: Colors.cyanAccent),
             onPressed: () async {
               await Navigator.push(
                 context,
@@ -179,8 +202,8 @@ class _MemberListScreenState extends State<MemberListScreen> {
       ),
       body: loading
           ? const Center(
-        child: CircularProgressIndicator(
-            color: Colors.cyanAccent),
+        child:
+        CircularProgressIndicator(color: Colors.cyanAccent),
       )
           : Column(
         children: [
@@ -192,7 +215,6 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= SORT MENU =================
-
   Widget _sortMenu() {
     return PopupMenuButton<SortType>(
       icon: const Icon(Icons.sort, color: Colors.cyanAccent),
@@ -216,13 +238,12 @@ class _MemberListScreenState extends State<MemberListScreen> {
   PopupMenuItem<SortType> _menuItem(String text, SortType value) {
     return PopupMenuItem(
       value: value,
-      child:
-      Text(text, style: const TextStyle(color: Colors.white)),
+      child: Text(text,
+          style: const TextStyle(color: Colors.white)),
     );
   }
 
   // ================= SEARCH BAR =================
-
   Widget _searchBar() {
     return Padding(
       padding: const EdgeInsets.all(12),
@@ -246,7 +267,6 @@ class _MemberListScreenState extends State<MemberListScreen> {
   }
 
   // ================= LIST =================
-
   Widget _memberList() {
     if (filteredMembers.isEmpty) {
       return const Center(
@@ -262,38 +282,49 @@ class _MemberListScreenState extends State<MemberListScreen> {
         final m = filteredMembers[i];
         final glow = isHighlighted(m);
 
+        final isSuspended = m.status == 'suspended';
+
         return AnimatedContainer(
           duration: const Duration(milliseconds: 250),
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
             color: Colors.white10,
             borderRadius: BorderRadius.circular(16),
-            boxShadow: glow
-                ? [
-              BoxShadow(
-                color: Colors.cyanAccent.withOpacity(0.6),
-                blurRadius: 16,
-              )
-            ]
-                : [],
-            border: glow
-                ? Border.all(
-                color: Colors.cyanAccent, width: 1.5)
-                : null,
+            border: Border.all(
+              color:
+              isSuspended ? Colors.redAccent : Colors.cyanAccent,
+              width: 1.2,
+            ),
           ),
           child: ListTile(
-            title: Text(m.name,
-                style: const TextStyle(color: Colors.white)),
+            title: Text(
+              m.name,
+              style: TextStyle(
+                color: isSuspended
+                    ? Colors.redAccent
+                    : Colors.white,
+              ),
+            ),
             subtitle: Text(
               "ID: ${m.userId} • ${m.role}",
-              style: TextStyle(
-                color:
-                glow ? Colors.cyanAccent : Colors.white54,
+              style: const TextStyle(color: Colors.white54),
+            ),
+            leading: Chip(
+              label: Text(
+                isSuspended ? 'SUSPENDED' : 'ACTIVE',
+                style: const TextStyle(color: Colors.white),
               ),
+              backgroundColor:
+              isSuspended ? Colors.red : Colors.green,
             ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                IconButton(
+                  icon: const Icon(Icons.sync),
+                  color: Colors.orangeAccent,
+                  onPressed: () => toggleStatus(m),
+                ),
                 IconButton(
                   icon: const Icon(Icons.bar_chart,
                       color: Colors.cyanAccent),

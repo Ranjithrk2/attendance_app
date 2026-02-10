@@ -2,11 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image/image.dart' as img;
+
 import '../services/face_verification_service.dart';
 import '../services/pin_storage.dart';
+import '../services/location_service.dart'; // ✅ ADDED
 import 'selfie_camera_screen.dart';
 import 'user_attendance_history_screen.dart';
 import 'face_register_screen.dart';
@@ -30,7 +33,10 @@ class _UserDashboardState extends State<UserDashboard>
   bool _loading = false;
   bool _faceRegistered = false;
   bool _pinSet = false;
+
   String firestoreUserId = "";
+  bool _isSuspended = false; // ✅ ADDED
+
   String sessionEmoji = "😎";
   final List<String> _emojis = [
     "😎","🎯","🧠","🤠","😁","👻","☠️","🧟‍♂️","🤠","🤑","🥴️","🗿","🌞","😬",
@@ -51,10 +57,12 @@ class _UserDashboardState extends State<UserDashboard>
     _loadWeeklyHours();
     _loadActiveCheckIn();
     _checkPin();
+
     _glowController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
+
     _glowAnimation = Tween<double>(begin: 12, end: 28).animate(
       CurvedAnimation(parent: _glowController, curve: Curves.easeInOut),
     );
@@ -62,17 +70,23 @@ class _UserDashboardState extends State<UserDashboard>
 
   Future<void> _loadUserData() async {
     try {
-      final doc =
-      await FirebaseFirestore.instance.collection('users').doc(widget.uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .get();
+
       final data = doc.data();
       if (data == null) return;
+
       final raw = data['masterFaceEmbedding'];
       final embedding =
       raw is List ? raw.map((e) => (e as num).toDouble()).toList() : null;
+
       if (mounted) {
         setState(() {
           _faceRegistered = embedding != null && embedding.isNotEmpty;
           firestoreUserId = data['userId'] ?? '';
+          _isSuspended = data['status'] == 'suspended'; // ✅ ADDED
         });
       }
     } catch (_) {}
@@ -88,13 +102,16 @@ class _UserDashboardState extends State<UserDashboard>
       final now = DateTime.now();
       final monday = now.subtract(Duration(days: now.weekday - 1));
       final sunday = monday.add(const Duration(days: 6));
+
       final snap = await FirebaseFirestore.instance
           .collection("attendance")
           .where("userId", isEqualTo: widget.uid)
           .where("checkIn", isGreaterThanOrEqualTo: Timestamp.fromDate(monday))
           .where("checkIn", isLessThanOrEqualTo: Timestamp.fromDate(sunday))
           .get();
+
       List<double> tempHours = List.filled(7, 0);
+
       for (var doc in snap.docs) {
         final data = doc.data();
         final checkIn = (data['checkIn'] as Timestamp).toDate();
@@ -105,6 +122,7 @@ class _UserDashboardState extends State<UserDashboard>
         final index = checkIn.weekday - 1;
         tempHours[index] += duration;
       }
+
       if (mounted) setState(() => weeklyHours = tempHours);
     } catch (e) {
       debugPrint("Error loading weekly hours: $e");
@@ -119,10 +137,12 @@ class _UserDashboardState extends State<UserDashboard>
           .where("checkOut", isNull: true)
           .limit(1)
           .get();
+
       if (snap.docs.isNotEmpty) {
         final data = snap.docs.first.data();
         final checkInTimestamp = data['checkIn'] as Timestamp?;
         final selfieBase64 = data['checkInSelfieBase64'] as String?;
+
         if (checkInTimestamp != null) {
           setState(() {
             checkInTime = checkInTimestamp.toDate();
@@ -151,13 +171,12 @@ class _UserDashboardState extends State<UserDashboard>
     });
   }
 
-  /// Compress image to keep Firestore document <1MB
   Future<String> _compressImageBase64(File file) async {
     final bytes = await file.readAsBytes();
     final image = img.decodeImage(bytes);
     if (image == null) return base64Encode(bytes);
-    final resized = img.copyResize(image, width: 800); // Resize for safety
-    final jpg = img.encodeJpg(resized, quality: 70); // Compress quality
+    final resized = img.copyResize(image, width: 800);
+    final jpg = img.encodeJpg(resized, quality: 70);
     return base64Encode(jpg);
   }
 
@@ -166,10 +185,16 @@ class _UserDashboardState extends State<UserDashboard>
     try {
       setState(() => _loading = true);
 
+      if (_isSuspended) { // ✅ ADDED
+        _showSnack("Your account is suspended ❌");
+        return;
+      }
+
       if (!_faceRegistered) {
         _showSnack("Face not registered ❌");
         return;
       }
+
       if (!_pinSet) {
         _showSnack("PIN not set ❌");
         return;
@@ -177,29 +202,35 @@ class _UserDashboardState extends State<UserDashboard>
 
       final isCheckIn = checkInTime == null;
 
-      // Capture selfie
       final File? file = await Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => SelfieCameraScreen(isCheckIn: isCheckIn)),
+        MaterialPageRoute(
+          builder: (_) => SelfieCameraScreen(isCheckIn: isCheckIn),
+        ),
       );
       if (file == null) return;
 
       final selfieBase64 = await _compressImageBase64(file);
 
-      // Fetch master embedding
-      final userDoc =
-      await FirebaseFirestore.instance.collection('users').doc(widget.uid).get();
+      final location = await LocationService.getCurrentLocation(); // ✅ ADDED
+
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .get();
+
       final data = userDoc.data();
       if (data == null) return;
+
       final raw = data['masterFaceEmbedding'];
       final masterEmbedding =
       raw is List ? raw.map((e) => (e as num).toDouble()).toList() : null;
+
       if (masterEmbedding == null || masterEmbedding.isEmpty) {
         _showSnack("Face not registered ❌");
         return;
       }
 
-      // Validate face
       final valid = isCheckIn
           ? await FaceVerificationService.validateCheckIn(
           masterEmbedding: masterEmbedding, selfieFile: file)
@@ -211,12 +242,12 @@ class _UserDashboardState extends State<UserDashboard>
         return;
       }
 
-      // ---------- PIN CONFIRM ----------
       final storedPin = await PinStorage.getPin(widget.uid);
       if (storedPin == null) {
         _showSnack("PIN not set ❌");
         return;
       }
+
       String enteredPin = '';
       final confirmed = await showDialog<bool>(
         context: context,
@@ -232,18 +263,20 @@ class _UserDashboardState extends State<UserDashboard>
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, enteredPin == storedPin),
-              child: const Text("Confirm", style: TextStyle(color: Colors.white70)),
+              onPressed: () =>
+                  Navigator.pop(context, enteredPin == storedPin),
+              child:
+              const Text("Confirm", style: TextStyle(color: Colors.white70)),
             )
           ],
         ),
       );
+
       if (confirmed != true) {
         _showSnack("Incorrect PIN ❌");
         return;
       }
 
-      // ---------- SAVE CHECK-IN / CHECK-OUT ----------
       if (isCheckIn) {
         await FirebaseFirestore.instance.collection("attendance").add({
           "userId": widget.uid,
@@ -252,7 +285,9 @@ class _UserDashboardState extends State<UserDashboard>
           "checkOut": null,
           "checkInSelfieBase64": selfieBase64,
           "checkInMethod": "face",
+          "location": location, // ✅ ADDED
         });
+
         setState(() {
           checkInTime = DateTime.now();
           checkInImage = file;
@@ -266,16 +301,22 @@ class _UserDashboardState extends State<UserDashboard>
             .where("checkOut", isNull: true)
             .limit(1)
             .get();
+
         if (snap.docs.isEmpty) {
           _showSnack("No active check-in found ❌");
           return;
         }
+
         final docId = snap.docs.first.id;
 
-        await FirebaseFirestore.instance.collection("attendance").doc(docId).update({
+        await FirebaseFirestore.instance
+            .collection("attendance")
+            .doc(docId)
+            .update({
           "checkOut": Timestamp.now(),
-          "checkOutSelfieBase64": selfieBase64, // <-- Save checkout selfie
+          "checkOutSelfieBase64": selfieBase64,
           "checkOutMethod": "face",
+          "location": location, // ✅ ADDED
         });
 
         _timer?.cancel();
@@ -294,7 +335,8 @@ class _UserDashboardState extends State<UserDashboard>
   }
 
   void _showSnack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
@@ -303,6 +345,10 @@ class _UserDashboardState extends State<UserDashboard>
     _glowController.dispose();
     super.dispose();
   }
+
+// 🔽 UI CODE BELOW — UNCHANGED 🔽
+// (Your existing build(), buttons, animations, etc.)
+
 
   @override
   Widget build(BuildContext context) {
