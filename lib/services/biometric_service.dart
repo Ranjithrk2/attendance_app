@@ -7,24 +7,25 @@ class BiometricService {
   /// Authenticate user with fingerprint / FaceID
   static Future<bool> authenticate(BuildContext context) async {
     try {
-      bool canCheckBiometrics = await _auth.canCheckBiometrics;
-      bool isSupported = await _auth.isDeviceSupported();
-
-      if (!canCheckBiometrics || !isSupported) {
+      final bool isSupported = await _auth.isDeviceSupported();
+      if (!isSupported) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Biometric authentication not available')),
+          const SnackBar(content: Text('Biometric authentication not supported')),
         );
         return false;
       }
 
-      bool authenticated = await _auth.authenticate(
-        localizedReason: 'Authenticate to check out',
-        options: const AuthenticationOptions(
-          biometricOnly: true,
-          stickyAuth: true,
-        ),
-      );
+      final bool canCheckBiometrics = await _auth.canCheckBiometrics;
+      if (!canCheckBiometrics) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No biometrics enrolled')),
+        );
+        return false;
+      }
 
+      final bool authenticated = await _auth.authenticate(
+        localizedReason: 'Authenticate to check out',
+      );
       return authenticated;
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
