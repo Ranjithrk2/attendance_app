@@ -1,9 +1,12 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:permission_handler/permission_handler.dart';
+
 import '../models/attendance_record.dart';
+
+enum SortType { az, za, latest, oldest }
 
 class AdminAttendanceHistoryScreen extends StatefulWidget {
   const AdminAttendanceHistoryScreen({super.key});
@@ -15,32 +18,32 @@ class AdminAttendanceHistoryScreen extends StatefulWidget {
 
 class _AdminAttendanceHistoryScreenState
     extends State<AdminAttendanceHistoryScreen> {
-  List<AttendanceRecord> records = [];
-  bool isLoading = false;
-  bool hasMore = true;
-  static const int batchSize = 10;
-
-  DocumentSnapshot? lastDoc;
-  DateTime _focusedDay = DateTime.now();
-  DateTime? _selectedDay;
-
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchCtrl = TextEditingController();
 
-  String? filterUserId;
-
+  List<AttendanceRecord> records = [];
   Map<String, Map<String, dynamic>> userCache = {};
+
+  bool isLoading = false;
+  bool hasMore = true;
+
+  static const int batchSize = 10;
+  DocumentSnapshot? lastDoc;
+
+  DateTime _focusedDay = DateTime.now();
+  DateTime? _selectedDay = DateTime.now();
+
+  String? filterUserId;
+  SortType _sortType = SortType.latest;
 
   @override
   void initState() {
     super.initState();
-    _requestLocationPermission();
-    _selectedDay = DateTime.now();
     _loadRecords(_selectedDay!);
 
     _scrollController.addListener(() {
       if (_scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent - 100 &&
+          _scrollController.position.maxScrollExtent - 120 &&
           !isLoading &&
           hasMore) {
         _loadMoreRecords();
@@ -60,17 +63,13 @@ class _AdminAttendanceHistoryScreenState
     super.dispose();
   }
 
-  Future<void> _requestLocationPermission() async {
-    await Permission.locationWhenInUse.request();
-  }
+  /* -------------------- FIRESTORE -------------------- */
 
   Future<void> _loadUserDetails(String userId) async {
     if (userCache.containsKey(userId)) return;
 
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(userId)
-        .get();
+    final doc =
+    await FirebaseFirestore.instance.collection('users').doc(userId).get();
 
     if (doc.exists) {
       userCache[userId] = doc.data()!;
@@ -88,42 +87,46 @@ class _AdminAttendanceHistoryScreenState
 
     try {
       final batch = await _fetchBatch(date);
+      records = batch;
+      _applySorting();
+      isLoading = false;
 
-      setState(() {
-        records = batch;
-        isLoading = false;
-      });
-
-      for (var r in batch) {
+      for (final r in batch) {
         _loadUserDetails(r.userId);
       }
+      setState(() {});
     } catch (_) {
-      setState(() => isLoading = false);
+      isLoading = false;
+      setState(() {});
     }
   }
 
   Future<List<AttendanceRecord>> _fetchBatch(DateTime date) async {
-    final start = DateTime(date.year, date.month, date.day, 0, 0, 0);
+    final start = DateTime(date.year, date.month, date.day);
     final end = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
-    Query q = FirebaseFirestore.instance
+    Query query = FirebaseFirestore.instance
         .collection('attendance')
-        .where('checkIn',
-        isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('checkIn',
-        isLessThanOrEqualTo: Timestamp.fromDate(end))
+        .where(
+      'checkIn',
+      isGreaterThanOrEqualTo: Timestamp.fromDate(start),
+    )
+        .where(
+      'checkIn',
+      isLessThanOrEqualTo: Timestamp.fromDate(end),
+    )
         .orderBy('checkIn', descending: true)
         .limit(batchSize);
 
     if (filterUserId != null && filterUserId!.isNotEmpty) {
-      q = q.where('userId', isEqualTo: filterUserId);
+      query = query.where('userId', isEqualTo: filterUserId);
     }
 
     if (lastDoc != null) {
-      q = q.startAfterDocument(lastDoc!);
+      query = query.startAfterDocument(lastDoc!);
     }
 
-    final snap = await q.get();
+    final snap = await query.get();
 
     if (snap.docs.isEmpty) {
       hasMore = false;
@@ -143,26 +146,46 @@ class _AdminAttendanceHistoryScreenState
     setState(() => isLoading = true);
 
     final batch = await _fetchBatch(_selectedDay!);
+    records.addAll(batch);
+    _applySorting();
 
-    setState(() {
-      records.addAll(batch);
-      isLoading = false;
-      if (batch.length < batchSize) hasMore = false;
-    });
+    if (batch.length < batchSize) hasMore = false;
+    isLoading = false;
 
-    for (var r in batch) {
+    for (final r in batch) {
       _loadUserDetails(r.userId);
+    }
+
+    setState(() {});
+  }
+
+  /* -------------------- SORTING -------------------- */
+
+  void _applySorting() {
+    switch (_sortType) {
+      case SortType.az:
+        records.sort((a, b) =>
+            a.userId.toLowerCase().compareTo(b.userId.toLowerCase()));
+        break;
+      case SortType.za:
+        records.sort((a, b) =>
+            b.userId.toLowerCase().compareTo(a.userId.toLowerCase()));
+        break;
+      case SortType.latest:
+        records.sort((a, b) => b.checkIn.compareTo(a.checkIn));
+        break;
+      case SortType.oldest:
+        records.sort((a, b) => a.checkIn.compareTo(b.checkIn));
+        break;
     }
   }
 
-  /// 🔥 SAFE BASE64 IMAGE
+  /* -------------------- HELPERS -------------------- */
+
   ImageProvider? _img(String? b64) {
     if (b64 == null || b64.isEmpty) return null;
-
     try {
-      if (b64.contains(',')) {
-        b64 = b64.split(',').last;
-      }
+      if (b64.contains(',')) b64 = b64.split(',').last;
       return MemoryImage(base64Decode(b64));
     } catch (_) {
       return null;
@@ -182,6 +205,8 @@ class _AdminAttendanceHistoryScreenState
     return '${r.totalTime.inHours}h ${r.totalTime.inMinutes % 60}m';
   }
 
+  /* -------------------- UI -------------------- */
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -189,6 +214,7 @@ class _AdminAttendanceHistoryScreenState
       appBar: AppBar(
         backgroundColor: Colors.black,
         title: const Text('Attendance Calendar'),
+        actions: [_sortMenu()],
       ),
       body: SafeArea(
         child: Column(
@@ -203,6 +229,24 @@ class _AdminAttendanceHistoryScreenState
     );
   }
 
+  Widget _sortMenu() {
+    return PopupMenuButton<SortType>(
+      icon: const Icon(Icons.sort),
+      onSelected: (v) {
+        setState(() {
+          _sortType = v;
+          _applySorting();
+        });
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: SortType.latest, child: Text('Latest First')),
+        PopupMenuItem(value: SortType.oldest, child: Text('Oldest First')),
+        PopupMenuItem(value: SortType.az, child: Text('User ID A–Z')),
+        PopupMenuItem(value: SortType.za, child: Text('User ID Z–A')),
+      ],
+    );
+  }
+
   Widget _searchBar() {
     return Padding(
       padding: const EdgeInsets.all(12),
@@ -212,8 +256,7 @@ class _AdminAttendanceHistoryScreenState
         decoration: InputDecoration(
           hintText: "Search by User ID",
           hintStyle: const TextStyle(color: Colors.white54),
-          prefixIcon:
-          const Icon(Icons.search, color: Colors.cyanAccent),
+          prefixIcon: const Icon(Icons.search, color: Colors.cyanAccent),
           filled: true,
           fillColor: Colors.white12,
           border: OutlineInputBorder(
@@ -232,11 +275,10 @@ class _AdminAttendanceHistoryScreenState
       focusedDay: _focusedDay,
       selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
       onDaySelected: (selected, focused) {
-        setState(() {
-          _selectedDay = selected;
-          _focusedDay = focused;
-        });
+        _selectedDay = selected;
+        _focusedDay = focused;
         _loadRecords(selected);
+        setState(() {});
       },
     );
   }
@@ -249,8 +291,10 @@ class _AdminAttendanceHistoryScreenState
 
     if (records.isEmpty) {
       return const Center(
-        child: Text('No attendance records',
-            style: TextStyle(color: Colors.white54)),
+        child: Text(
+          'No attendance records',
+          style: TextStyle(color: Colors.white54),
+        ),
       );
     }
 
@@ -260,9 +304,7 @@ class _AdminAttendanceHistoryScreenState
       itemCount: records.length,
       itemBuilder: (_, i) {
         final r = records[i];
-        final userName =
-            userCache[r.userId]?['name'] ?? r.userId;
-
+        final userName = userCache[r.userId]?['name'] ?? r.userId;
         final checkInImg = _img(r.checkInSelfieBase64);
         final checkOutImg = _img(r.checkOutSelfieBase64);
 
@@ -279,72 +321,31 @@ class _AdminAttendanceHistoryScreenState
               Row(
                 children: [
                   Expanded(
-                    child: Text(userName,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold)),
+                    child: Text(
+                      userName,
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
                   ),
                   _statusBadge(r),
                 ],
               ),
               const SizedBox(height: 8),
               Text('Check-in: ${r.checkIn.toLocal()}',
-                  style:
-                  const TextStyle(color: Colors.white70)),
+                  style: const TextStyle(color: Colors.white70)),
               Text(
-                  'Check-out: ${r.checkOut?.toLocal() ?? "Working"}',
-                  style:
-                  const TextStyle(color: Colors.white70)),
+                'Check-out: ${r.checkOut?.toLocal() ?? "Working"}',
+                style: const TextStyle(color: Colors.white70),
+              ),
               Text('Duration: ${duration(r)}',
-                  style:
-                  const TextStyle(color: Colors.white60)),
-
+                  style: const TextStyle(color: Colors.white60)),
               const SizedBox(height: 12),
-
               Row(
                 children: [
                   if (checkInImg != null)
-                    Expanded(
-                      child: Column(
-                        children: [
-                          const Text("Check-in Photo",
-                              style: TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 12)),
-                          const SizedBox(height: 6),
-                          ClipRRect(
-                            borderRadius:
-                            BorderRadius.circular(12),
-                            child: Image(
-                              image: checkInImg,
-                              height: 120,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    Expanded(child: _photo('Check-in Photo', checkInImg)),
                   if (checkOutImg != null)
-                    Expanded(
-                      child: Column(
-                        children: [
-                          const Text("Check-out Photo",
-                              style: TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 12)),
-                          const SizedBox(height: 6),
-                          ClipRRect(
-                            borderRadius:
-                            BorderRadius.circular(12),
-                            child: Image(
-                              image: checkOutImg,
-                              height: 120,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    Expanded(child: _photo('Check-out Photo', checkOutImg)),
                 ],
               ),
             ],
@@ -354,56 +355,67 @@ class _AdminAttendanceHistoryScreenState
     );
   }
 
+  Widget _photo(String title, ImageProvider img) {
+    return Column(
+      children: [
+        Text(title,
+            style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image(image: img, height: 120, fit: BoxFit.cover),
+        ),
+      ],
+    );
+  }
+
   Widget _totalCard() {
     return Container(
-      margin:
-      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white10,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
-        mainAxisAlignment:
-        MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           const Text('Total Working Time',
               style: TextStyle(color: Colors.white70)),
-          Text(totalWorkingTime(),
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold)),
+          Text(
+            totalWorkingTime(),
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
   }
 
   Widget _statusBadge(AttendanceRecord r) {
-    Color bgColor;
-    String text;
+    late Color bg;
+    late String text;
 
     if (r.checkOut == null) {
-      bgColor = Colors.green;
-      text = "Checked In";
+      bg = Colors.green;
+      text = 'Checked In';
     } else if (r.autoCheckedOut) {
-      bgColor = Colors.orange;
-      text = "Auto Checked Out";
+      bg = Colors.orange;
+      text = 'Auto Checked Out';
     } else {
-      bgColor = Colors.blueAccent;
-      text = "Checked Out";
+      bg = Colors.blueAccent;
+      text = 'Checked Out';
     }
 
     return Container(
-      padding:
-      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(12)),
-      child: Text(text,
-          style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 12)),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration:
+      BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+      child: Text(
+        text,
+        style: const TextStyle(
+            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+      ),
     );
   }
 }
