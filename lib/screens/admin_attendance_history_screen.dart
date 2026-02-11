@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/attendance_record.dart';
 
@@ -19,10 +18,9 @@ class _AdminAttendanceHistoryScreenState
   List<AttendanceRecord> records = [];
   bool isLoading = false;
   bool hasMore = true;
-
   static const int batchSize = 10;
-  DocumentSnapshot? lastDoc;
 
+  DocumentSnapshot? lastDoc;
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
 
@@ -31,7 +29,6 @@ class _AdminAttendanceHistoryScreenState
 
   String? filterUserId;
 
-  /// 🔥 User Cache (from users collection)
   Map<String, Map<String, dynamic>> userCache = {};
 
   @override
@@ -51,7 +48,7 @@ class _AdminAttendanceHistoryScreenState
     });
 
     _searchCtrl.addListener(() {
-      filterUserId = _searchCtrl.text.trim().toLowerCase();
+      filterUserId = _searchCtrl.text.trim();
       _loadRecords(_selectedDay!);
     });
   }
@@ -67,7 +64,6 @@ class _AdminAttendanceHistoryScreenState
     await Permission.locationWhenInUse.request();
   }
 
-  /// 🔥 Load User Details from users collection
   Future<void> _loadUserDetails(String userId) async {
     if (userCache.containsKey(userId)) return;
 
@@ -92,16 +88,16 @@ class _AdminAttendanceHistoryScreenState
 
     try {
       final batch = await _fetchBatch(date);
+
       setState(() {
         records = batch;
         isLoading = false;
       });
 
-      // 🔥 Preload user details
       for (var r in batch) {
         _loadUserDetails(r.userId);
       }
-    } catch (e) {
+    } catch (_) {
       setState(() => isLoading = false);
     }
   }
@@ -159,9 +155,14 @@ class _AdminAttendanceHistoryScreenState
     }
   }
 
+  /// 🔥 SAFE BASE64 IMAGE
   ImageProvider? _img(String? b64) {
     if (b64 == null || b64.isEmpty) return null;
+
     try {
+      if (b64.contains(',')) {
+        b64 = b64.split(',').last;
+      }
       return MemoryImage(base64Decode(b64));
     } catch (_) {
       return null;
@@ -184,7 +185,6 @@ class _AdminAttendanceHistoryScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      resizeToAvoidBottomInset: true,
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
@@ -230,8 +230,7 @@ class _AdminAttendanceHistoryScreenState
       firstDay: DateTime(2023),
       lastDay: DateTime.now(),
       focusedDay: _focusedDay,
-      selectedDayPredicate: (d) =>
-          isSameDay(d, _selectedDay),
+      selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
       onDaySelected: (selected, focused) {
         setState(() {
           _selectedDay = selected;
@@ -245,40 +244,27 @@ class _AdminAttendanceHistoryScreenState
   Widget _body() {
     if (records.isEmpty && isLoading) {
       return const Center(
-        child:
-        CircularProgressIndicator(color: Colors.white),
-      );
+          child: CircularProgressIndicator(color: Colors.white));
     }
 
     if (records.isEmpty) {
       return const Center(
-        child: Text(
-          'No attendance records',
-          style: TextStyle(color: Colors.white54),
-        ),
+        child: Text('No attendance records',
+            style: TextStyle(color: Colors.white54)),
       );
     }
 
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(16),
-      itemCount: records.length + 1,
+      itemCount: records.length,
       itemBuilder: (_, i) {
-        if (i == records.length) {
-          return hasMore
-              ? const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(
-              child: CircularProgressIndicator(
-                  color: Colors.cyanAccent),
-            ),
-          )
-              : const SizedBox();
-        }
-
         final r = records[i];
         final userName =
             userCache[r.userId]?['name'] ?? r.userId;
+
+        final checkInImg = _img(r.checkInSelfieBase64);
+        final checkOutImg = _img(r.checkOutSelfieBase64);
 
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
@@ -288,39 +274,79 @@ class _AdminAttendanceHistoryScreenState
             borderRadius: BorderRadius.circular(18),
           ),
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      userName,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight:
-                          FontWeight.bold),
-                      overflow:
-                      TextOverflow.ellipsis,
-                    ),
+                    child: Text(userName,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold)),
                   ),
-                  const SizedBox(width: 8),
                   _statusBadge(r),
                 ],
               ),
               const SizedBox(height: 8),
-              Text(
-                  'Check-in: ${r.checkIn.toLocal()}',
-                  style: const TextStyle(
-                      color: Colors.white70)),
+              Text('Check-in: ${r.checkIn.toLocal()}',
+                  style:
+                  const TextStyle(color: Colors.white70)),
               Text(
                   'Check-out: ${r.checkOut?.toLocal() ?? "Working"}',
-                  style: const TextStyle(
-                      color: Colors.white70)),
-              Text(
-                  'Duration: ${duration(r)}',
-                  style: const TextStyle(
-                      color: Colors.white60)),
+                  style:
+                  const TextStyle(color: Colors.white70)),
+              Text('Duration: ${duration(r)}',
+                  style:
+                  const TextStyle(color: Colors.white60)),
+
+              const SizedBox(height: 12),
+
+              Row(
+                children: [
+                  if (checkInImg != null)
+                    Expanded(
+                      child: Column(
+                        children: [
+                          const Text("Check-in Photo",
+                              style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12)),
+                          const SizedBox(height: 6),
+                          ClipRRect(
+                            borderRadius:
+                            BorderRadius.circular(12),
+                            child: Image(
+                              image: checkInImg,
+                              height: 120,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (checkOutImg != null)
+                    Expanded(
+                      child: Column(
+                        children: [
+                          const Text("Check-out Photo",
+                              style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12)),
+                          const SizedBox(height: 6),
+                          ClipRRect(
+                            borderRadius:
+                            BorderRadius.circular(12),
+                            child: Image(
+                              image: checkOutImg,
+                              height: 120,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ],
           ),
         );
@@ -330,8 +356,8 @@ class _AdminAttendanceHistoryScreenState
 
   Widget _totalCard() {
     return Container(
-      margin: const EdgeInsets.symmetric(
-          horizontal: 16, vertical: 8),
+      margin:
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white10,
@@ -342,13 +368,11 @@ class _AdminAttendanceHistoryScreenState
         MainAxisAlignment.spaceBetween,
         children: [
           const Text('Total Working Time',
-              style:
-              TextStyle(color: Colors.white70)),
+              style: TextStyle(color: Colors.white70)),
           Text(totalWorkingTime(),
               style: const TextStyle(
                   color: Colors.white,
-                  fontWeight:
-                  FontWeight.bold)),
+                  fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -370,17 +394,15 @@ class _AdminAttendanceHistoryScreenState
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: 10, vertical: 4),
+      padding:
+      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
           color: bgColor,
-          borderRadius:
-          BorderRadius.circular(12)),
+          borderRadius: BorderRadius.circular(12)),
       child: Text(text,
           style: const TextStyle(
               color: Colors.white,
-              fontWeight:
-              FontWeight.bold,
+              fontWeight: FontWeight.bold,
               fontSize: 12)),
     );
   }
