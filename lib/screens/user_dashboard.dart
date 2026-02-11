@@ -1,23 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image/image.dart' as img;
-
 import '../services/face_verification_service.dart';
 import '../services/pin_storage.dart';
-import '../services/location_service.dart'; // ✅ ADDED
+import '../services/location_service.dart';
 import 'selfie_camera_screen.dart';
 import 'user_attendance_history_screen.dart';
 import 'face_register_screen.dart';
-import 'settings_screen.dart';
 import 'user_login_screen.dart';
 
 class UserDashboard extends StatefulWidget {
-  final String uid; // Firestore user document ID
+  final String uid;
   const UserDashboard({super.key, required this.uid});
 
   @override
@@ -33,14 +29,14 @@ class _UserDashboardState extends State<UserDashboard>
   bool _loading = false;
   bool _faceRegistered = false;
   bool _pinSet = false;
-
   String firestoreUserId = "";
-  bool _isSuspended = false; // ✅ ADDED
-
+  bool _isSuspended = false;
   String sessionEmoji = "😎";
+  String? _currentLocation;
+
   final List<String> _emojis = [
-    "😎","🎯","🧠","🤠","😁","👻","☠️","🧟‍♂️","🤠","🤑","🥴️","🗿","🌞","😬",
-    "🧝‍♀️","👸","👹","🦸‍♀️","👨‍🦱","🥷","🧐",
+    "😎","🎯","🧠","🤠","😁","👻","☠️","🧟‍♂️","🤑",
+    "🥴","🗿","🌞","😬","🧝‍♀️","👸","👹","🦸‍♀️","👨‍🦱","🥷","🧐",
   ];
 
   late AnimationController _glowController;
@@ -68,25 +64,22 @@ class _UserDashboardState extends State<UserDashboard>
     );
   }
 
+  // ------------------- DATA LOADERS -------------------
   Future<void> _loadUserData() async {
     try {
       final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(widget.uid)
           .get();
-
       final data = doc.data();
       if (data == null) return;
-
       final raw = data['masterFaceEmbedding'];
-      final embedding =
-      raw is List ? raw.map((e) => (e as num).toDouble()).toList() : null;
-
+      final embedding = raw is List ? raw.map((e) => (e as num).toDouble()).toList() : null;
       if (mounted) {
         setState(() {
           _faceRegistered = embedding != null && embedding.isNotEmpty;
           firestoreUserId = data['userId'] ?? '';
-          _isSuspended = data['status'] == 'suspended'; // ✅ ADDED
+          _isSuspended = data['status'] == 'suspended';
         });
       }
     } catch (_) {}
@@ -142,6 +135,7 @@ class _UserDashboardState extends State<UserDashboard>
         final data = snap.docs.first.data();
         final checkInTimestamp = data['checkIn'] as Timestamp?;
         final selfieBase64 = data['checkInSelfieBase64'] as String?;
+        final locationData = data['location'];
 
         if (checkInTimestamp != null) {
           setState(() {
@@ -149,6 +143,10 @@ class _UserDashboardState extends State<UserDashboard>
             liveDuration = DateTime.now().difference(checkInTime!);
             if (selfieBase64 != null && selfieBase64.isNotEmpty) {
               checkInImage = File.fromRawPath(base64Decode(selfieBase64));
+            }
+            if (locationData != null) {
+              _currentLocation =
+              "${locationData['latitude']?.toStringAsFixed(5)}, ${locationData['longitude']?.toStringAsFixed(5)}";
             }
           });
           _startTimer();
@@ -161,7 +159,7 @@ class _UserDashboardState extends State<UserDashboard>
 
   void _startTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (checkInTime != null && mounted) {
         setState(() {
           liveDuration = DateTime.now().difference(checkInTime!);
@@ -185,23 +183,20 @@ class _UserDashboardState extends State<UserDashboard>
     try {
       setState(() => _loading = true);
 
-      if (_isSuspended) { // ✅ ADDED
+      if (_isSuspended) {
         _showSnack("Your account is suspended ❌");
         return;
       }
-
       if (!_faceRegistered) {
         _showSnack("Face not registered ❌");
         return;
       }
-
       if (!_pinSet) {
         _showSnack("PIN not set ❌");
         return;
       }
 
       final isCheckIn = checkInTime == null;
-
       final File? file = await Navigator.push(
         context,
         MaterialPageRoute(
@@ -211,14 +206,17 @@ class _UserDashboardState extends State<UserDashboard>
       if (file == null) return;
 
       final selfieBase64 = await _compressImageBase64(file);
+      final location = await LocationService.getCurrentLocation();
 
-      final location = await LocationService.getCurrentLocation(); // ✅ ADDED
+      setState(() {
+        _currentLocation =
+        "${location['latitude']?.toStringAsFixed(5)}, ${location['longitude']?.toStringAsFixed(5)}";
+      });
 
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(widget.uid)
           .get();
-
       final data = userDoc.data();
       if (data == null) return;
 
@@ -263,10 +261,8 @@ class _UserDashboardState extends State<UserDashboard>
           ),
           actions: [
             TextButton(
-              onPressed: () =>
-                  Navigator.pop(context, enteredPin == storedPin),
-              child:
-              const Text("Confirm", style: TextStyle(color: Colors.white70)),
+              onPressed: () => Navigator.pop(context, enteredPin == storedPin),
+              child: const Text("Confirm", style: TextStyle(color: Colors.white70)),
             )
           ],
         ),
@@ -285,7 +281,7 @@ class _UserDashboardState extends State<UserDashboard>
           "checkOut": null,
           "checkInSelfieBase64": selfieBase64,
           "checkInMethod": "face",
-          "location": location, // ✅ ADDED
+          "location": location,
         });
 
         setState(() {
@@ -301,14 +297,11 @@ class _UserDashboardState extends State<UserDashboard>
             .where("checkOut", isNull: true)
             .limit(1)
             .get();
-
         if (snap.docs.isEmpty) {
           _showSnack("No active check-in found ❌");
           return;
         }
-
         final docId = snap.docs.first.id;
-
         await FirebaseFirestore.instance
             .collection("attendance")
             .doc(docId)
@@ -316,7 +309,7 @@ class _UserDashboardState extends State<UserDashboard>
           "checkOut": Timestamp.now(),
           "checkOutSelfieBase64": selfieBase64,
           "checkOutMethod": "face",
-          "location": location, // ✅ ADDED
+          "location": location,
         });
 
         _timer?.cancel();
@@ -325,8 +318,8 @@ class _UserDashboardState extends State<UserDashboard>
           liveDuration = Duration.zero;
           checkInImage = null;
           sessionEmoji = (_emojis..shuffle()).first;
+          _currentLocation = null;
         });
-
         _showSnack("Checked out ✅");
       }
     } finally {
@@ -346,13 +339,11 @@ class _UserDashboardState extends State<UserDashboard>
     super.dispose();
   }
 
-// 🔽 UI CODE BELOW — UNCHANGED 🔽
-// (Your existing build(), buttons, animations, etc.)
-
-
+  // ------------------- UI -------------------
   @override
   Widget build(BuildContext context) {
     final isWorking = checkInTime != null;
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -411,13 +402,10 @@ class _UserDashboardState extends State<UserDashboard>
                                 child: CircleAvatar(
                                   radius: 65,
                                   backgroundColor: Colors.black87,
-                                  backgroundImage:
-                                  checkInImage != null ? FileImage(checkInImage!) : null,
+                                  backgroundImage: checkInImage != null ? FileImage(checkInImage!) : null,
                                   child: checkInImage == null
-                                      ? Text(
-                                    sessionEmoji,
-                                    style: const TextStyle(fontSize: 56, color: Colors.white),
-                                  )
+                                      ? Text(sessionEmoji,
+                                      style: const TextStyle(fontSize: 56, color: Colors.white))
                                       : null,
                                 ),
                               ),
@@ -454,9 +442,7 @@ class _UserDashboardState extends State<UserDashboard>
                                     ),
                                     const SizedBox(width: 6),
                                     Text(
-                                      firestoreUserId.isNotEmpty
-                                          ? "ID: $firestoreUserId"
-                                          : "ID: ---",
+                                      firestoreUserId.isNotEmpty ? "ID: $firestoreUserId" : "ID: ---",
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 14,
@@ -470,15 +456,21 @@ class _UserDashboardState extends State<UserDashboard>
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
+
                         const SizedBox(height: 60),
+
                         AnimatedSwitcher(
                           duration: const Duration(milliseconds: 300),
                           child: isWorking
                               ? _statusChip("SHIFT STARTED", Colors.green)
-                              : _statusChip("SHIFT ENDED", Colors.redAccent),
+                              : _statusChip(
+                              _isSuspended ? "ACCOUNT SUSPENDED" : "SHIFT ENDED",
+                              _isSuspended ? Colors.redAccent : Colors.redAccent),
                         ),
+
                         const SizedBox(height: 30),
+
+                        // Live Timer
                         Text(
                           "${liveDuration.inHours.toString().padLeft(2, '0')}:"
                               "${liveDuration.inMinutes.remainder(60).toString().padLeft(2, '0')}:"
@@ -490,39 +482,77 @@ class _UserDashboardState extends State<UserDashboard>
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        const SizedBox(height: 100),
 
-                        if (!_faceRegistered) ...[
+                        const SizedBox(height: 12),
+
+                        // Current Location Display
+                        if (_currentLocation != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.5),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.location_on, color: Colors.orangeAccent, size: 18),
+                                const SizedBox(width: 6),
+                                Text(
+                                  "Location: $_currentLocation",
+                                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                        const SizedBox(height: 20),
+
+                        // Modern status cards for PIN/Face/Suspension
+                        if (!_pinSet || !_faceRegistered || _isSuspended)
+                          Column(
+                            children: [
+                              if (!_pinSet) _infoCard("PIN not set", Icons.lock_outline, Colors.orangeAccent),
+                              if (!_faceRegistered)
+                                _infoCard("Face not registered", Icons.face_outlined, Colors.deepPurpleAccent),
+                              if (_isSuspended) _infoCard("Account Suspended", Icons.block, Colors.redAccent),
+                              const SizedBox(height: 20),
+                            ],
+                          ),
+
+                        // Check-in / Check-out button
+                        if (_faceRegistered && !_isSuspended)
+                          _actionButton(
+                            isWorking ? "CHECK OUT" : "CHECK IN",
+                            isWorking ? Colors.redAccent : Colors.lightGreenAccent,
+                            _loading ? null : _handleCheck,
+                          ),
+
+                        const SizedBox(height: 12),
+
+                        // Face Register if not registered
+                        if (!_faceRegistered)
                           _actionButton(
                             "REGISTER FACE",
                             Colors.orangeAccent,
                                 () async {
                               await Navigator.push(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (_) => FaceRegisterScreen(userId: widget.uid),
-                                ),
+                                MaterialPageRoute(builder: (_) => FaceRegisterScreen(userId: widget.uid)),
                               );
                               _loadUserData();
                               _checkPin();
                             },
                           ),
-                          const SizedBox(height: 12),
-                        ] else ...[
-                          _actionButton(
-                            isWorking ? "CHECK OUT" : "CHECK IN",
-                            isWorking ? Colors.redAccent : Colors.lightGreenAccent,
-                            _loading ? null : _handleCheck,
-                          ),
-                        ],
 
+                        const SizedBox(height: 12),
+
+                        // Attendance History
                         TextButton(
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(
-                                builder: (_) => const UserAttendanceHistoryScreen(),
-                              ),
+                              MaterialPageRoute(builder: (_) => const UserAttendanceHistoryScreen()),
                             );
                           },
                           child: const Text(
@@ -530,9 +560,7 @@ class _UserDashboardState extends State<UserDashboard>
                             style: TextStyle(color: Colors.white70),
                           ),
                         ),
-
                         const SizedBox(height: 16),
-
                       ],
                     ),
                   ),
@@ -554,6 +582,28 @@ class _UserDashboardState extends State<UserDashboard>
         borderRadius: BorderRadius.circular(30),
       ),
       child: Text(text, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _infoCard(String text, IconData icon, Color color) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color, width: 1.5),
+        boxShadow: [
+          BoxShadow(color: color.withOpacity(0.3), blurRadius: 6, offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 10),
+          Text(text, style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w600)),
+        ],
+      ),
     );
   }
 

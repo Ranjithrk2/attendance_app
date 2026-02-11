@@ -17,16 +17,81 @@ class _MemberListScreenState extends State<MemberListScreen> {
   final TextEditingController searchCtrl = TextEditingController();
   SortType currentSort = SortType.nameAsc;
 
+  List<Member> allMembers = [];
+  List<Member> displayedMembers = [];
+  bool isLoading = true;
+
+  final int pageSize = 10;
+  int lastLoadedIndex = 0;
+  bool hasMore = true;
+
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchMembers();
+
+    // Infinite scroll listener
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 100 &&
+          !isLoading &&
+          hasMore) {
+        _loadMoreMembers();
+      }
+    });
+  }
+
   @override
   void dispose() {
     searchCtrl.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  bool isHighlighted(Member m, String query) {
-    if (query.isEmpty) return false;
-    return m.name.toLowerCase().contains(query) ||
-        m.userId.toLowerCase().contains(query);
+  Future<void> _fetchMembers() async {
+    setState(() => isLoading = true);
+    final snap = await FirebaseFirestore.instance.collection('users').get();
+    final members = snap.docs
+        .map((doc) => Member.fromMap(doc.id, doc.data() as Map<String, dynamic>))
+        .toList();
+
+    setState(() {
+      allMembers = sortMembers(members);
+      displayedMembers.clear();
+      lastLoadedIndex = 0;
+      hasMore = true;
+      _loadMoreMembers();
+    });
+  }
+
+  void _loadMoreMembers() {
+    if (!hasMore) return;
+
+    final query = searchCtrl.text.trim().toLowerCase();
+    List<Member> filtered = allMembers;
+    if (query.isNotEmpty) {
+      filtered = allMembers
+          .where((m) =>
+      m.name.toLowerCase().contains(query) ||
+          m.userId.toLowerCase().contains(query))
+          .toList();
+    }
+
+    final nextIndex = lastLoadedIndex + pageSize;
+    if (lastLoadedIndex >= filtered.length) {
+      hasMore = false;
+      return;
+    }
+
+    setState(() {
+      displayedMembers.addAll(
+          filtered.sublist(lastLoadedIndex, nextIndex > filtered.length ? filtered.length : nextIndex));
+      lastLoadedIndex = nextIndex;
+      if (lastLoadedIndex >= filtered.length) hasMore = false;
+      isLoading = false;
+    });
   }
 
   Future<void> toggleStatus(Member member) async {
@@ -49,6 +114,8 @@ class _MemberListScreenState extends State<MemberListScreen> {
         });
       }
     }
+
+    await _fetchMembers();
   }
 
   Future<void> deleteMember(Member member) async {
@@ -57,6 +124,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Member deleted")),
       );
+      await _fetchMembers();
     } catch (e) {
       debugPrint("Delete error: $e");
     }
@@ -111,6 +179,13 @@ class _MemberListScreenState extends State<MemberListScreen> {
     return list;
   }
 
+  void _onSearchChanged() {
+    displayedMembers.clear();
+    lastLoadedIndex = 0;
+    hasMore = true;
+    _loadMoreMembers();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -127,6 +202,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
                 context,
                 MaterialPageRoute(builder: (_) => const AddMemberScreen()),
               );
+              await _fetchMembers();
             },
           ),
         ],
@@ -135,130 +211,109 @@ class _MemberListScreenState extends State<MemberListScreen> {
         children: [
           _searchBar(),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('users').snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: CircularProgressIndicator(color: Colors.cyanAccent),
-                  );
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(
-                    child: Text("No members found",
-                        style: TextStyle(color: Colors.white54)),
-                  );
-                }
-
-                // Map documents to Member objects
-                List<Member> members = snapshot.data!.docs
-                    .map((doc) =>
-                    Member.fromMap(doc.id, doc.data() as Map<String, dynamic>))
-                    .toList();
-
-                // Apply search
-                final query = searchCtrl.text.trim().toLowerCase();
-                if (query.isNotEmpty) {
-                  members = members.where((m) {
-                    return m.name.toLowerCase().contains(query) ||
-                        m.userId.toLowerCase().contains(query);
-                  }).toList();
+            child: displayedMembers.isEmpty && !isLoading
+                ? const Center(
+              child: Text("No members found",
+                  style: TextStyle(color: Colors.white54)),
+            )
+                : ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(16),
+              itemCount: displayedMembers.length + 1,
+              itemBuilder: (_, i) {
+                if (i == displayedMembers.length) {
+                  // Loader at the bottom
+                  return hasMore
+                      ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(
+                      child: CircularProgressIndicator(color: Colors.cyanAccent),
+                    ),
+                  )
+                      : const SizedBox.shrink();
                 }
 
-                // Apply sort
-                members = sortMembers(members);
-
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: members.length,
-                  itemBuilder: (_, i) {
-                    final m = members[i];
-                    final isSuspended = m.status == 'suspended';
-
-                    return Card(
+                final m = displayedMembers[i];
+                final isSuspended = m.status == 'suspended';
+                return Card(
+                  color: Colors.grey[850],
+                  shadowColor: Colors.black54,
+                  elevation: 4,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                      color: isSuspended ? Colors.redAccent : Colors.cyanAccent,
+                      width: 1,
+                    ),
+                  ),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: ListTile(
+                    contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    leading: Container(
+                      padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isSuspended ? Colors.red : Colors.green,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        isSuspended ? 'SUSPENDED' : 'ACTIVE',
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    title: Text(
+                      m.name,
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight:
+                          isSuspended ? FontWeight.w500 : FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      "ID: ${m.userId} • ${m.role}",
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    trailing: PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert, color: Colors.cyanAccent),
                       color: Colors.grey[850],
-                      shadowColor: Colors.black54,
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: BorderSide(
-                          color: isSuspended ? Colors.redAccent : Colors.cyanAccent,
-                          width: 1,
-                        ),
-                      ),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                        leading: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: isSuspended ? Colors.red : Colors.green,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'toggleStatus':
+                            toggleStatus(m);
+                            break;
+                          case 'viewReport':
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => MemberReportScreen(member: m)),
+                            );
+                            break;
+                          case 'delete':
+                            confirmDelete(m);
+                            break;
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        PopupMenuItem(
+                          value: 'toggleStatus',
                           child: Text(
-                            isSuspended ? 'SUSPENDED' : 'ACTIVE',
-                            style: const TextStyle(
-                                color: Colors.white, fontWeight: FontWeight.bold),
+                            isSuspended ? 'Activate' : 'Suspend',
+                            style: const TextStyle(color: Colors.white),
                           ),
                         ),
-                        title: Text(
-                          m.name,
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: isSuspended
-                                  ? FontWeight.w500
-                                  : FontWeight.w600),
+                        const PopupMenuItem(
+                          value: 'viewReport',
+                          child:
+                          Text('View Report', style: TextStyle(color: Colors.white)),
                         ),
-                        subtitle: Text(
-                          "ID: ${m.userId} • ${m.role}",
-                          style: const TextStyle(color: Colors.white70),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete', style: TextStyle(color: Colors.redAccent)),
                         ),
-                        trailing: PopupMenuButton<String>(
-                          icon: const Icon(Icons.more_vert, color: Colors.cyanAccent),
-                          color: Colors.grey[850],
-                          onSelected: (value) {
-                            switch (value) {
-                              case 'toggleStatus':
-                                toggleStatus(m);
-                                break;
-                              case 'viewReport':
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) =>
-                                          MemberReportScreen(member: m)),
-                                );
-                                break;
-                              case 'delete':
-                                confirmDelete(m);
-                                break;
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: 'toggleStatus',
-                              child: Text(
-                                isSuspended ? 'Activate' : 'Suspend',
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'viewReport',
-                              child: Text('View Report',
-                                  style: TextStyle(color: Colors.white)),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Text('Delete',
-                                  style: TextStyle(color: Colors.redAccent)),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+                      ],
+                    ),
+                  ),
                 );
               },
             ),
@@ -276,6 +331,11 @@ class _MemberListScreenState extends State<MemberListScreen> {
       onSelected: (value) {
         setState(() {
           currentSort = value;
+          allMembers = sortMembers(allMembers);
+          displayedMembers.clear();
+          lastLoadedIndex = 0;
+          hasMore = true;
+          _loadMoreMembers();
         });
       },
       itemBuilder: (_) => [
@@ -301,6 +361,7 @@ class _MemberListScreenState extends State<MemberListScreen> {
       padding: const EdgeInsets.all(12),
       child: TextField(
         controller: searchCtrl,
+        onChanged: (_) => _onSearchChanged(),
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           hintText: "Search by name or ID",

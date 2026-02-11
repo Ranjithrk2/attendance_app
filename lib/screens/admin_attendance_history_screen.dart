@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../models/attendance_record.dart'; // your AttendanceRecord model
 
 class AdminAttendanceHistoryScreen extends StatefulWidget {
   const AdminAttendanceHistoryScreen({super.key});
@@ -15,20 +16,49 @@ class AdminAttendanceHistoryScreen extends StatefulWidget {
 
 class _AdminAttendanceHistoryScreenState
     extends State<AdminAttendanceHistoryScreen> {
-  List<Map<String, dynamic>> records = [];
+  List<AttendanceRecord> records = [];
   bool isLoading = false;
+  bool hasMore = true;
+  static const int batchSize = 10;
+  DocumentSnapshot? lastDoc;
+
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
+  final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchCtrl = TextEditingController();
+  String? filterUserId;
 
   @override
   void initState() {
     super.initState();
     _requestLocationPermission();
     _selectedDay = DateTime.now();
-    loadRecordsByDate(_selectedDay!);
+    _loadRecords(_selectedDay!);
+
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 100 &&
+          !isLoading &&
+          hasMore) {
+        _loadMoreRecords();
+      }
+    });
+
+    _searchCtrl.addListener(() {
+      setState(() {
+        filterUserId = _searchCtrl.text.trim().toLowerCase();
+        _loadRecords(_selectedDay!);
+      });
+    });
   }
 
-  // ---------------- REQUEST LOCATION PERMISSION ----------------
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _requestLocationPermission() async {
     final status = await Permission.locationWhenInUse.request();
     if (status.isDenied || status.isPermanentlyDenied) {
@@ -37,28 +67,18 @@ class _AdminAttendanceHistoryScreenState
     }
   }
 
-  // ---------------- FIRESTORE LOAD (DAY-WISE) ----------------
-  Future<void> loadRecordsByDate(DateTime date) async {
+  Future<void> _loadRecords(DateTime date) async {
     setState(() {
       isLoading = true;
       records.clear();
+      lastDoc = null;
+      hasMore = true;
     });
 
     try {
-      // Handle start and end of the day in local timezone
-      final start = DateTime(date.year, date.month, date.day, 0, 0, 0);
-      final end = DateTime(date.year, date.month, date.day, 23, 59, 59);
-
-      final snapshot = await FirebaseFirestore.instance
-          .collection('attendance')
-          .where('checkIn',
-          isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('checkIn', isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .orderBy('checkIn', descending: true)
-          .get();
-
+      final batch = await _fetchBatch(date);
       setState(() {
-        records = snapshot.docs.map((d) => d.data()).toList();
+        records = batch;
         isLoading = false;
       });
     } catch (e) {
@@ -67,11 +87,53 @@ class _AdminAttendanceHistoryScreenState
     }
   }
 
-  // ---------------- HELPERS ----------------
-  DateTime? _ts(dynamic v) => v is Timestamp ? v.toDate() : null;
+  Future<List<AttendanceRecord>> _fetchBatch(DateTime date) async {
+    final start = DateTime(date.year, date.month, date.day, 0, 0, 0);
+    final end = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
-  ImageProvider? _img(dynamic b64) {
-    if (b64 == null || b64 is! String || b64.isEmpty) return null;
+    Query q = FirebaseFirestore.instance
+        .collection('attendance')
+        .where('checkIn', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('checkIn', isLessThanOrEqualTo: Timestamp.fromDate(end))
+        .orderBy('checkIn', descending: true)
+        .limit(batchSize);
+
+    if (filterUserId != null && filterUserId!.isNotEmpty) {
+      q = q.where('userId', isEqualTo: filterUserId);
+    }
+
+    if (lastDoc != null) {
+      q = q.startAfterDocument(lastDoc!);
+    }
+
+    final snap = await q.get();
+    if (snap.docs.isEmpty) {
+      hasMore = false;
+      return [];
+    }
+
+    lastDoc = snap.docs.last;
+    return snap.docs.map((doc) => AttendanceRecord.fromDoc(doc)).toList();
+  }
+
+  Future<void> _loadMoreRecords() async {
+    if (!hasMore) return;
+    setState(() => isLoading = true);
+    try {
+      final batch = await _fetchBatch(_selectedDay!);
+      setState(() {
+        records.addAll(batch);
+        isLoading = false;
+        if (batch.length < batchSize) hasMore = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading more records: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  ImageProvider? _img(String? b64) {
+    if (b64 == null || b64.isEmpty) return null;
     try {
       return MemoryImage(base64Decode(b64));
     } catch (_) {
@@ -82,30 +144,45 @@ class _AdminAttendanceHistoryScreenState
   String totalWorkingTime() {
     Duration total = Duration.zero;
     for (final r in records) {
-      final i = _ts(r['checkIn']);
-      final o = _ts(r['checkOut']);
-      if (i != null && o != null) {
-        total += o.difference(i);
-      }
+      total += r.totalTime;
     }
     return '${total.inHours}h ${total.inMinutes % 60}m';
   }
 
-  String duration(DateTime? i, DateTime? o) {
-    if (i == null || o == null) return '--';
-    final d = o.difference(i);
-    return '${d.inHours}h ${d.inMinutes % 60}m';
+  String duration(AttendanceRecord r) {
+    if (r.checkOut == null) return '--';
+    return '${r.totalTime.inHours}h ${r.totalTime.inMinutes % 60}m';
   }
 
-  // ---------------- LOCATION UI ----------------
-  Widget _locationBlock(String title, Map<String, dynamic>? loc) {
-    if (loc == null) return const SizedBox();
-    final lat = loc['lat'];
-    final lng = loc['lng'];
-    final acc = loc['accuracy'];
-    final ts = _ts(loc['timestamp']);
-    if (lat == null || lng == null) return const SizedBox();
+  Widget _statusBadge(AttendanceRecord r) {
+    Color bgColor;
+    String text;
 
+    if (r.checkOut == null) {
+      bgColor = Colors.green;
+      text = "Checked In";
+    } else if (r.autoCheckedOut) {
+      bgColor = Colors.orange;
+      text = "Auto Checked Out";
+    } else {
+      bgColor = Colors.blueAccent;
+      text = "Checked Out";
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+          color: bgColor, borderRadius: BorderRadius.circular(12)),
+      child: Text(text,
+          style: const TextStyle(
+              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+    );
+  }
+
+  Widget _locationBlock(String title, GeoPoint? loc) {
+    if (loc == null) return const SizedBox();
+    final lat = loc.latitude;
+    final lng = loc.longitude;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(
@@ -117,15 +194,9 @@ class _AdminAttendanceHistoryScreenState
           const SizedBox(height: 2),
           Text('Lat: $lat, Lng: $lng',
               style: const TextStyle(color: Colors.white60, fontSize: 13)),
-          Text('Accuracy: ${acc ?? '--'} m',
-              style: const TextStyle(color: Colors.white60, fontSize: 13)),
-          if (ts != null)
-            Text('At: ${ts.toLocal()}',
-                style: const TextStyle(color: Colors.white60, fontSize: 12)),
           TextButton(
             onPressed: () async {
-              final url =
-                  'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+              final url = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
               if (await canLaunchUrl(Uri.parse(url))) {
                 launchUrl(Uri.parse(url),
                     mode: LaunchMode.externalApplication);
@@ -141,7 +212,27 @@ class _AdminAttendanceHistoryScreenState
     );
   }
 
-  // ---------------- UI ----------------
+  Widget _searchBar() {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: TextField(
+        controller: _searchCtrl,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          hintText: "Search by User ID",
+          hintStyle: const TextStyle(color: Colors.white54),
+          prefixIcon: const Icon(Icons.search, color: Colors.cyanAccent),
+          filled: true,
+          fillColor: Colors.white12,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -152,6 +243,7 @@ class _AdminAttendanceHistoryScreenState
       ),
       body: Column(
         children: [
+          _searchBar(),
           _calendar(),
           if (_selectedDay != null) _totalCard(),
           Expanded(child: _body()),
@@ -160,7 +252,6 @@ class _AdminAttendanceHistoryScreenState
     );
   }
 
-  // ---------------- CALENDAR ----------------
   Widget _calendar() {
     return TableCalendar(
       firstDay: DateTime(2023),
@@ -171,7 +262,8 @@ class _AdminAttendanceHistoryScreenState
         defaultTextStyle: TextStyle(color: Colors.white),
         weekendTextStyle: TextStyle(color: Colors.white70),
         todayDecoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
-        selectedDecoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle),
+        selectedDecoration:
+        BoxDecoration(color: Colors.green, shape: BoxShape.circle),
       ),
       headerStyle: const HeaderStyle(
         titleTextStyle: TextStyle(color: Colors.white),
@@ -188,12 +280,11 @@ class _AdminAttendanceHistoryScreenState
           _selectedDay = selected;
           _focusedDay = focused;
         });
-        loadRecordsByDate(selected);
+        _loadRecords(selected);
       },
     );
   }
 
-  // ---------------- BODY ----------------
   Widget _body() {
     if (_selectedDay == null) {
       return const Center(
@@ -204,7 +295,7 @@ class _AdminAttendanceHistoryScreenState
       );
     }
 
-    if (isLoading) {
+    if (records.isEmpty && isLoading) {
       return const Center(
         child: CircularProgressIndicator(color: Colors.white),
       );
@@ -220,15 +311,24 @@ class _AdminAttendanceHistoryScreenState
     }
 
     return ListView.builder(
+      controller: _scrollController,
       padding: const EdgeInsets.all(16),
-      itemCount: records.length,
+      itemCount: records.length + 1,
       itemBuilder: (_, i) {
+        if (i == records.length) {
+          return hasMore
+              ? const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(
+              child: CircularProgressIndicator(color: Colors.cyanAccent),
+            ),
+          )
+              : const SizedBox.shrink();
+        }
+
         final r = records[i];
-        final iTime = _ts(r['checkIn']);
-        final oTime = _ts(r['checkOut']);
-        final inImg = _img(r['checkInSelfieBase64']);
-        final outImg = _img(r['checkOutSelfieBase64']);
-        final auto = r['autoCheckedOut'] == true;
+        final inImg = _img(r.checkInSelfieBase64);
+        final outImg = _img(r.checkOutSelfieBase64);
 
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
@@ -236,34 +336,31 @@ class _AdminAttendanceHistoryScreenState
           decoration: BoxDecoration(
             color: Colors.white10,
             borderRadius: BorderRadius.circular(18),
-            border: auto
+            border: r.autoCheckedOut
                 ? Border.all(color: Colors.orangeAccent, width: 1.4)
                 : null,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text((r['displayUserId'] ?? '--').toString(),
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold)),
-              if (auto)
-                const Padding(
-                  padding: EdgeInsets.only(top: 6),
-                  child: Chip(
-                    label:
-                    Text('AUTO CHECK-OUT', style: TextStyle(color: Colors.white)),
-                    backgroundColor: Colors.orange,
-                  ),
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(r.userId,
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold)),
+                  _statusBadge(r),
+                ],
+              ),
               const SizedBox(height: 8),
-              _row('Check-in', iTime?.toLocal().toString() ?? '--'),
-              _row('Check-out', oTime?.toLocal().toString() ?? 'Working'),
+              _row('Check-in', r.checkIn.toLocal().toString()),
+              _row('Check-out', r.checkOut?.toLocal().toString() ?? 'Working'),
               if (inImg != null) _imgRow('Check-in', inImg),
               if (outImg != null) _imgRow('Check-out', outImg),
-              _locationBlock('Check-in Location', r['checkInLocation']),
-              _locationBlock('Check-out Location', r['checkOutLocation']),
+              _locationBlock('Check-in Location', r.checkInLocation),
+              _locationBlock('Check-out Location', r.checkOutLocation),
               const SizedBox(height: 6),
-              Text('Duration: ${duration(iTime, oTime)}',
+              Text('Duration: ${duration(r)}',
                   style: const TextStyle(color: Colors.white60)),
             ],
           ),
@@ -285,8 +382,7 @@ class _AdminAttendanceHistoryScreenState
         children: [
           const Text('Total Working Time', style: TextStyle(color: Colors.white70)),
           Text(totalWorkingTime(),
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold)),
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         ],
       ),
     );
